@@ -273,6 +273,12 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
              [ this ]( const QString &message ) { statusBar()->showMessage( message, 10000 ); } );
     experimentCatalog->startRescan();
 
+    auto *screenshotAction = new QAction( QIcon( iconPath + "camera.svg" ), tr( "Скриншот" ), this );
+    screenshotAction->setToolTip( tr( "Сохранить снимок рабочего пространства в активный эксперимент" ) );
+    ui->toolBar->addSeparator();
+    ui->toolBar->addAction( screenshotAction );
+    connect( screenshotAction, &QAction::triggered, this, [ this ] { screenShot( SCREENSHOT, true ); } );
+
     recordDataAction = new QAction( tr( "Запись данных" ), this );
     recordDataAction->setCheckable( true );
     dataRecordIcon = QIcon( iconPath + "exporter.svg" );
