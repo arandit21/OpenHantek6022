@@ -35,9 +35,11 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QFileDialog>
+#include <QFont>
 #include <QImage>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QLabel>
 #include <QLoggingCategory>
 #include <QMessageBox>
 #include <QPainter>
@@ -77,8 +79,8 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
     elapsedTime.start();
 
     ui->setupUi( this );
-    // Variant 3 keeps the oscilloscope plotting widget intact while moving
-    // navigation to a compact, vertically docked laboratory tool rail.
+    // Keep the upstream oscilloscope widget intact inside the approved light
+    // laboratory shell and its compact vertical tool rail.
     ui->toolBar->setOrientation( Qt::Vertical );
     addToolBar( Qt::LeftToolBarArea, ui->toolBar );
     ui->toolBar->setToolButtonStyle( Qt::ToolButtonTextUnderIcon );
@@ -192,10 +194,10 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
     // Window title
     setWindowIcon( QIcon( ":/images/OpenHantek.svg" ) );
     setWindowTitle( dsoControl->getDevice()->isRealHW()
-                        ? tr( "OpenHantek6022 (%1) - Device %2 (FW%3)" )
+                        ? tr( "OpenHantek Laboratory (%1) — Прибор %2 (FW%3)" )
                               .arg( QString::fromStdString( VERSION ), dsoControl->getModel()->name )
                               .arg( dsoControl->getDevice()->getFwVersion(), 4, 16, QChar( '0' ) )
-                        : tr( "OpenHantek6022 (%1) - " ).arg( QString::fromStdString( VERSION ) ) + tr( "Demo Mode" ) );
+                        : tr( "OpenHantek Laboratory (%1) — Демо режим" ).arg( QString::fromStdString( VERSION ) ) );
 
 #if ( QT_VERSION >= QT_VERSION_CHECK( 5, 6, 0 ) )
     setDockOptions( dockOptions() | QMainWindow::GroupedDragging );
@@ -292,9 +294,25 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
     libraryWidget = new ExperimentLibraryWidget( experimentCatalog, experimentManager, this );
     libraryDock = new QDockWidget( tr( "Библиотека исследований" ), this );
     libraryDock->setObjectName( QStringLiteral( "researchLibraryDock" ) );
-    libraryDock->setMinimumHeight( 205 );
+    libraryDock->setMinimumWidth( 280 );
+    libraryDock->setMaximumWidth( 520 );
+    libraryDock->setFeatures( QDockWidget::DockWidgetClosable | QDockWidget::DockWidgetMovable );
     libraryDock->setWidget( libraryWidget );
-    addDockWidget( Qt::BottomDockWidgetArea, libraryDock );
+    addDockWidget( Qt::LeftDockWidgetArea, libraryDock );
+    auto *libraryTitleBar = new QWidget( libraryDock );
+    auto *libraryTitleLayout = new QHBoxLayout( libraryTitleBar );
+    libraryTitleLayout->setContentsMargins( 8, 2, 4, 2 );
+    auto *libraryTitle = new QLabel( tr( "Библиотека исследований" ), libraryTitleBar );
+    QFont libraryTitleFont = libraryTitle->font();
+    libraryTitleFont.setBold( true );
+    libraryTitle->setFont( libraryTitleFont );
+    libraryTitleLayout->addWidget( libraryTitle, 1 );
+    auto *closeLibraryButton = new QPushButton( QStringLiteral( "←" ), libraryTitleBar );
+    closeLibraryButton->setFixedSize( 28, 26 );
+    closeLibraryButton->setToolTip( tr( "Скрыть библиотеку" ) );
+    libraryTitleLayout->addWidget( closeLibraryButton );
+    libraryDock->setTitleBarWidget( libraryTitleBar );
+    connect( closeLibraryButton, &QPushButton::clicked, libraryDock, &QDockWidget::hide );
     auto *libraryAction = new QAction( tr( "Библиотека" ), this );
     libraryAction->setCheckable( true );
     libraryAction->setIcon( QIcon( iconPath + "book.svg" ) );
@@ -303,7 +321,11 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
     ui->toolBar->addAction( ui->actionSettings );
     ui->toolBar->addSeparator();
     ui->toolBar->addAction( libraryAction );
-    connect( libraryAction, &QAction::toggled, libraryDock, &QDockWidget::setVisible );
+    connect( libraryAction, &QAction::toggled, this, [ this ]( bool visible ) {
+        libraryDock->setVisible( visible );
+        if ( visible && libraryDock->width() < 280 )
+            resizeDocks( { libraryDock }, { 320 }, Qt::Horizontal );
+    } );
     connect( libraryDock, &QDockWidget::visibilityChanged, libraryAction, &QAction::setChecked );
     connect( libraryWidget, &ExperimentLibraryWidget::openRecordingRequested, this, &MainWindow::openRecording );
     connect( libraryWidget, &ExperimentLibraryWidget::activeExperimentChanged, this, [ this ]( const QString &path ) {
@@ -335,14 +357,15 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
     ui->toolBar->addAction( screenshotAction );
     ui->toolBar->addAction( recordVideoAction );
     ui->toolBar->addAction( recordDataAction );
-    const bool restoredWorkspace = restoreState( dsoSettings->mainWindowState, 2 );
+    QByteArray savedWorkspaceState = QSettings().value( QStringLiteral( "laboratory/mainWindowState" ) ).toByteArray();
+    if ( savedWorkspaceState.isEmpty() )
+        savedWorkspaceState = dsoSettings->mainWindowState;
+    const bool restoredWorkspace = restoreState( savedWorkspaceState, 3 );
     if ( !restoredWorkspace ) {
-        // A versioned layout invalidates the old top-toolbar arrangement once.
-        // Subsequent starts restore the user's own dock proportions and visibility.
-        libraryDock->show();
-        QTimer::singleShot( 0, this, [ this ] {
-            resizeDocks( { libraryDock }, { qMax( 235, height() / 3 ) }, Qt::Vertical );
-        } );
+        // The approved layout starts with a wide central scope and a closed
+        // left library drawer. Dock proportions and visibility are persisted.
+        libraryDock->hide();
+        QTimer::singleShot( 0, this, [ this ] { resizeDocks( { libraryDock }, { 320 }, Qt::Horizontal ); } );
     }
     libraryAction->setChecked( !libraryDock->isHidden() );
     recordVideoAction->setEnabled( Mp4VideoRecorder::isSupported() );
@@ -570,7 +593,7 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
         if ( !configFileName.isEmpty() ) {
             dsoSettings->loadFromFile( configFileName );
             restoreGeometry( dsoSettings->mainWindowGeometry );
-            restoreState( dsoSettings->mainWindowState, 2 );
+            restoreState( dsoSettings->mainWindowState, 3 );
 
             emit settingsLoaded( &dsoSettings->scope, spec );
 
@@ -585,7 +608,7 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
 
     connect( ui->actionSave, &QAction::triggered, this, [ this ]() {
         dsoSettings->mainWindowGeometry = saveGeometry();
-        dsoSettings->mainWindowState = saveState( 2 );
+        dsoSettings->mainWindowState = saveState( 3 );
         dsoSettings->save();
     } );
 
@@ -597,7 +620,7 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
         if ( !configFileName.endsWith( ".conf" ) )
             configFileName.append( ".conf" );
         dsoSettings->mainWindowGeometry = saveGeometry();
-        dsoSettings->mainWindowState = saveState( 2 );
+        dsoSettings->mainWindowState = saveState( 3 );
         dsoSettings->saveToFile( configFileName );
     } );
 
@@ -605,7 +628,7 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
 
     connect( ui->actionSettings, &QAction::triggered, this, [ this ]() {
         dsoSettings->mainWindowGeometry = saveGeometry();
-        dsoSettings->mainWindowState = saveState( 2 );
+        dsoSettings->mainWindowState = saveState( 3 );
 
         DsoConfigDialog *configDialog = new DsoConfigDialog( dsoSettings, this );
         configDialog->setModal( true );
@@ -1152,9 +1175,11 @@ void MainWindow::closeEvent( QCloseEvent *event ) {
             experimentManager->registerVideo( path );
         }
     }
+    const QByteArray workspaceState = saveState( 3 );
+    QSettings().setValue( QStringLiteral( "laboratory/mainWindowState" ), workspaceState );
     if ( dsoSettings->alwaysSave ) {
         dsoSettings->mainWindowGeometry = saveGeometry();
-        dsoSettings->mainWindowState = saveState( 2 );
+        dsoSettings->mainWindowState = workspaceState;
         dsoSettings->save();
     }
     QMainWindow::closeEvent( event );

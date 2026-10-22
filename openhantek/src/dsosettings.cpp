@@ -301,20 +301,27 @@ void DsoSettings::load() {
         storeSettings->endGroup(); // screen / print
     }
     storeSettings->endGroup(); // color
-    // Upgrade the stock OpenHantek dark canvas to the selected light laboratory
-    // workspace, but leave any user-customized color scheme untouched.
+    // Upgrade stock OpenHantek and the previous laboratory default canvases to
+    // the approved gray measurement surface, but leave user-customized colors
+    // untouched.
     const bool legacyDefaultCanvas = view.screen.background == QColor( 0x00, 0x00, 0x00 ) &&
                                      view.screen.text == QColor( 0xff, 0xff, 0xff ) &&
                                      view.screen.axes == QColor( 0x7f, 0x7f, 0x7f ) &&
                                      view.screen.border == QColor( 0xff, 0xff, 0xff ) &&
                                      view.screen.grid == QColor( 0xc0, 0xc0, 0xc0 ) &&
                                      view.screen.markers == QColor( 0xc0, 0xc0, 0xc0 );
-    if ( legacyDefaultCanvas ) {
-        view.screen.background = QColor( 0xff, 0xff, 0xff );
-        view.screen.border = QColor( 0xb7, 0xc0, 0xcc );
-        view.screen.grid = QColor( 0xd7, 0xde, 0xe7 );
-        view.screen.markers = QColor( 0x8c, 0x98, 0xa8 );
-        view.screen.text = QColor( 0x20, 0x29, 0x38 );
+    const bool previousLaboratoryDefault = view.screen.background == QColor( 0xff, 0xff, 0xff ) &&
+                                           view.screen.border == QColor( 0xb7, 0xc0, 0xcc ) &&
+                                           view.screen.grid == QColor( 0xd7, 0xde, 0xe7 ) &&
+                                           view.screen.markers == QColor( 0x8c, 0x98, 0xa8 ) &&
+                                           view.screen.text == QColor( 0x20, 0x29, 0x38 );
+    if ( legacyDefaultCanvas || previousLaboratoryDefault ) {
+        view.screen.axes = QColor( 0x64, 0x74, 0x8b );
+        view.screen.background = QColor( 0xd2, 0xd9, 0xe2 );
+        view.screen.border = QColor( 0xa7, 0xb4, 0xc3 );
+        view.screen.grid = QColor( 0xa7, 0xb4, 0xc3 );
+        view.screen.markers = QColor( 0x52, 0x64, 0x7a );
+        view.screen.text = QColor( 0x24, 0x32, 0x47 );
         if ( view.screen.voltage.size() > 1 &&
              view.screen.voltage[ 0 ] == QColor::fromHsv( 60, 0xff, 0xff ) &&
              view.screen.voltage[ 1 ] == QColor::fromHsv( 210, 0xff, 0xff ) ) {
