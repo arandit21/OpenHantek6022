@@ -444,7 +444,9 @@ bool ExperimentCatalog::beginNextExperiment() {
     }
     currentExperimentId = stableId( QDir::cleanPath( directoryInfo.absoluteFilePath() ).toCaseFolded() );
     currentExperimentName = manifest.value( QStringLiteral( "name" ) ).toString( directoryInfo.fileName() );
-    currentExperimentDescription = manifest.value( QStringLiteral( "description" ) ).toString();
+    // Older and hand-written manifests may omit an optional description.
+    // Keep the NOT NULL catalog invariant by binding an actual empty string.
+    currentExperimentDescription = manifest.value( QStringLiteral( "description" ) ).toString( QStringLiteral( "" ) );
     currentExperimentCreatedAt = manifest.value( QStringLiteral( "createdAt" ) ).toString(
         directoryInfo.birthTime().isValid() ? directoryInfo.birthTime().toString( Qt::ISODateWithMs )
                                             : directoryInfo.lastModified().toString( Qt::ISODateWithMs ) );
@@ -472,7 +474,8 @@ bool ExperimentCatalog::upsertExperiment( const QString &manifestId ) {
     query.bindValue( QStringLiteral( ":name" ), currentExperimentName );
     query.bindValue( QStringLiteral( ":created" ), currentExperimentCreatedAt );
     query.bindValue( QStringLiteral( ":modified" ), info.lastModified().toString( Qt::ISODateWithMs ) );
-    query.bindValue( QStringLiteral( ":description" ), currentExperimentDescription );
+    query.bindValue( QStringLiteral( ":description" ),
+                     currentExperimentDescription.isNull() ? QStringLiteral( "" ) : currentExperimentDescription );
     query.bindValue( QStringLiteral( ":scan" ), scanGeneration );
     if ( !query.exec() ) {
         databaseError = QStringLiteral( "Не удалось обновить эксперимент в картотеке: %1" ).arg( query.lastError().text() );
