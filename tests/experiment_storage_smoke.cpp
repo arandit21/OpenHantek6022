@@ -69,6 +69,9 @@ bool waitForScan( ExperimentCatalog &catalog, int *files, int *experiments ) {
         &catalog, &ExperimentCatalog::scanFailed, &loop,
         [ & ]( const QString &error ) {
             qCritical().noquote() << "Catalog scan failed:" << error;
+            const QByteArray diagnostic = QStringLiteral( "Catalog scan failed: %1\n" ).arg( error ).toLocal8Bit();
+            std::fwrite( diagnostic.constData(), 1, size_t( diagnostic.size() ), stderr );
+            std::fflush( stderr );
             failed = true;
             loop.quit();
         } );
