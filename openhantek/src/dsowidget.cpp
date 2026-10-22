@@ -59,7 +59,7 @@ class OutlinedScopeLabel final : public QLabel {
 
         QPainterPath glyphs;
         glyphs.addText( QPointF( x, baseline ), font(), text() );
-        QPen outline( QColor( Qt::white ) );
+        QPen outline{ QColor( Qt::white ) };
         outline.setWidthF( 1.0 / devicePixelRatioF() );
         outline.setJoinStyle( Qt::RoundJoin );
         painter.strokePath( glyphs, outline );
