@@ -254,6 +254,9 @@ bool ExperimentCatalog::initializeDatabase() {
         return false;
     }
     const QString initialIntegrityResult = initialIntegrityCheck.value( 0 ).toString();
+    // SQLite keeps the read statement's transaction open until the result is
+    // finalized. Release it before changing journal_mode to WAL below.
+    initialIntegrityCheck.finish();
     if ( initialIntegrityResult.compare( QStringLiteral( "ok" ), Qt::CaseInsensitive ) != 0 ) {
         databaseConfirmedCorrupt = true;
         databaseError = QStringLiteral( "SQLite integrity_check подтвердила повреждение (%1). Файл сохранён без изменений: %2" )
