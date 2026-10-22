@@ -38,6 +38,7 @@ class ExperimentCatalog : public QObject {
     bool isReady() const { return database.isOpen(); }
     QString errorString() const { return databaseError; }
     QString databasePath() const { return catalogFilePath; }
+    bool setProjectsRoot( const QString &projectsRoot, QString *errorMessage = nullptr );
     bool isScanning() const { return scanning; }
     QVector< ExperimentCatalogItem > query( const QString &category, const QString &search,
                                             const QString &activeExperimentPath = QString(),
@@ -54,6 +55,7 @@ class ExperimentCatalog : public QObject {
     QString catalogFilePath;
     QString connectionName;
     QString databaseError;
+    QStringList legacyProjectsRootPaths;
     QSqlDatabase database;
     QString scanGeneration;
     QStringList pendingExperiments;
@@ -67,8 +69,11 @@ class ExperimentCatalog : public QObject {
     int indexedFiles = 0;
     bool scanning = false;
     bool rescanRequested = false;
+    bool databaseConfirmedCorrupt = false;
 
     bool initializeDatabase();
+    bool configureDatabase( QString *errorMessage = nullptr );
+    void closeDatabase();
     void processScanBatch();
     bool beginNextExperiment();
     bool indexCurrentFile( const QString &path );

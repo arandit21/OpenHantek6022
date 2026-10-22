@@ -5,6 +5,7 @@
 #include <QCoreApplication>
 #include <QDate>
 #include <QDateTime>
+#include <QDebug>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -15,18 +16,97 @@
 #include <QSaveFile>
 #include <QSettings>
 #include <QStandardPaths>
+#include <QStorageInfo>
 #include <QUuid>
+
+namespace {
+bool prepareWritableDirectory( const QString &path, QString *errorMessage ) {
+    const QString absolutePath = QDir( path ).absolutePath();
+    if ( path.trimmed().isEmpty() || !QDir().mkpath( absolutePath ) ) {
+        if ( errorMessage )
+            *errorMessage = QStringLiteral( "Не удалось создать каталог хранилища: %1" ).arg( absolutePath );
+        return false;
+    }
+
+    QStorageInfo storage( absolutePath );
+    storage.refresh();
+    if ( storage.isValid() && !storage.isReady() ) {
+        if ( errorMessage )
+            *errorMessage = QStringLiteral( "Хранилище недоступно: %1 (устройство %2)" )
+                                .arg( absolutePath, QString::fromUtf8( storage.device() ) );
+        return false;
+    }
+
+    const QString probePath = QDir( absolutePath ).filePath(
+        QStringLiteral( ".openhantek-write-test-%1.tmp" ).arg( QUuid::createUuid().toString( QUuid::Id128 ) ) );
+    QFile probe( probePath );
+    if ( !probe.open( QIODevice::WriteOnly | QIODevice::NewOnly ) ) {
+        if ( errorMessage )
+            *errorMessage = QStringLiteral( "Нет доступа на запись в %1: %2" ).arg( absolutePath, probe.errorString() );
+        return false;
+    }
+    const QByteArray marker( "openhantek-storage-probe" );
+    const bool written = probe.write( marker ) == marker.size() && probe.flush();
+    const QString writeError = probe.errorString();
+    probe.close();
+    const bool removed = QFile::remove( probePath );
+    if ( !written || !removed ) {
+        if ( errorMessage )
+            *errorMessage = QStringLiteral( "Проверочная запись в %1 не завершена: %2%3" )
+                                .arg( absolutePath, written ? QString() : writeError,
+                                      removed ? QString() : QStringLiteral( "; не удалось удалить временный файл " ) + probePath );
+        return false;
+    }
+    if ( storage.isValid() && storage.bytesAvailable() == 0 ) {
+        if ( errorMessage )
+            *errorMessage = QStringLiteral( "На диске хранилища нет свободного места: %1" ).arg( absolutePath );
+        return false;
+    }
+    qInfo() << "OpenHantek storage probe passed:" << absolutePath
+            << "volume=" << storage.rootPath() << "device=" << storage.device()
+            << "filesystem=" << storage.fileSystemType() << "ready=" << storage.isReady()
+            << "bytesAvailable=" << storage.bytesAvailable();
+    return true;
+}
+
+QString directoryCreationDiagnostic( const QString &path, const QString &parentPath ) {
+    const QFileInfo parentInfo( parentPath );
+    QStorageInfo storage( parentPath );
+    storage.refresh();
+    return QStringLiteral( "Не удалось создать каталог %1. Родитель: %2; существует=%3; доступен для записи=%4; "
+                           "устройство=%5; диск готов=%6; свободно байт=%7" )
+        .arg( path, parentPath, parentInfo.exists() ? QStringLiteral( "да" ) : QStringLiteral( "нет" ),
+              parentInfo.isWritable() ? QStringLiteral( "да" ) : QStringLiteral( "нет" ),
+              QString::fromUtf8( storage.device() ), storage.isReady() ? QStringLiteral( "да" ) : QStringLiteral( "нет" ),
+              storage.isValid() ? QString::number( storage.bytesAvailable() ) : QStringLiteral( "неизвестно" ) );
+}
+} // namespace
 
 ExperimentManager::ExperimentManager() {
     const QString documents = QStandardPaths::writableLocation( QStandardPaths::DocumentsLocation );
-    if ( documents.isEmpty() ) {
-        startupError = tr( "The system did not provide a Documents directory." );
+    if ( documents.isEmpty() )
+        qWarning() << "QStandardPaths DocumentsLocation is empty";
+    const QString defaultParent = documents.isEmpty()
+        ? QStandardPaths::writableLocation( QStandardPaths::AppLocalDataLocation ) : documents;
+    if ( defaultParent.isEmpty() ) {
+        startupError = QStringLiteral( "Qt не вернул ни DocumentsLocation, ни AppLocalDataLocation." );
+        qCritical().noquote() << startupError;
         return;
     }
-
-    projectsRootPath = QDir( documents ).filePath( "OpenHantek Laboratory/Projects" );
-    if ( !QDir().mkpath( projectsRootPath ) ) {
-        startupError = tr( "Could not create the experiments directory: %1" ).arg( projectsRootPath );
+    const QString savedRoot = QSettings().value( QStringLiteral( "experiment/storageRoot" ) ).toString();
+    storageRootPath = QDir( savedRoot.isEmpty()
+                                ? QDir( defaultParent ).filePath( QStringLiteral( "OpenHantek Laboratory" ) )
+                                : savedRoot ).absolutePath();
+    projectsRootPath = QDir( storageRootPath ).filePath( QStringLiteral( "Projects" ) );
+    qInfo() << "OpenHantek storage roots:" << "DocumentsLocation=" << documents
+            << "storage=" << storageRootPath << "projects=" << projectsRootPath;
+    QString storageError;
+    const bool storageReady = prepareWritableDirectory( storageRootPath, &storageError );
+    const bool projectsReady = storageReady && QDir().mkpath( projectsRootPath ) &&
+                               prepareWritableDirectory( projectsRootPath, &storageError );
+    if ( !projectsReady ) {
+        startupError = storageError.isEmpty() ? directoryCreationDiagnostic( projectsRootPath, storageRootPath ) : storageError;
+        qWarning().noquote() << startupError;
         return;
     }
 
@@ -39,6 +119,41 @@ ExperimentManager::ExperimentManager() {
             startupError = error;
         }
     }
+}
+
+bool ExperimentManager::setStorageRoot( const QString &path, QString *errorMessage ) {
+    const QString newRoot = QDir( path ).absolutePath();
+    QString error;
+    if ( !prepareWritableDirectory( newRoot, &error ) ) {
+        if ( errorMessage )
+            *errorMessage = error;
+        return false;
+    }
+    if ( newRoot.compare( storageRootPath,
+#ifdef Q_OS_WIN
+                          Qt::CaseInsensitive
+#else
+                          Qt::CaseSensitive
+#endif
+                          ) == 0 ) {
+        QSettings().setValue( QStringLiteral( "experiment/storageRoot" ), storageRootPath );
+        return true;
+    }
+    const QString newProjectsRoot = QDir( newRoot ).filePath( QStringLiteral( "Projects" ) );
+    if ( !QDir().mkpath( newProjectsRoot ) || !prepareWritableDirectory( newProjectsRoot, &error ) ) {
+        if ( errorMessage )
+            *errorMessage = error.isEmpty() ? directoryCreationDiagnostic( newProjectsRoot, newRoot ) : error;
+        return false;
+    }
+
+    storageRootPath = newRoot;
+    projectsRootPath = newProjectsRoot;
+    activeExperimentPath.clear();
+    QSettings settings;
+    settings.setValue( QStringLiteral( "experiment/storageRoot" ), storageRootPath );
+    settings.remove( QStringLiteral( "experiment/activePath" ) );
+    qInfo() << "OpenHantek storage root changed to" << storageRootPath;
+    return true;
 }
 
 bool ExperimentManager::createExperiment( const QString &name, const QString &description, QString *errorMessage ) {
@@ -184,7 +299,7 @@ bool ExperimentManager::createExperimentAt( const QString &folderName, const QSt
     const QString path = projectsDirectory.filePath( folderName );
     if ( !projectsDirectory.mkdir( folderName ) ) {
         if ( errorMessage )
-            *errorMessage = tr( "Could not create the experiment directory: %1" ).arg( path );
+            *errorMessage = directoryCreationDiagnostic( path, projectsRootPath );
         return false;
     }
     if ( !ensureExperimentDirectories( path, errorMessage ) ) {

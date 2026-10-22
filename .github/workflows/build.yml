@@ -374,7 +374,13 @@ jobs:
       run:
         md build &
         call "%VCINSTALLDIR%/Auxiliary/Build/vcvars64.bat" &
-        cmake -G "Visual Studio 17 2022" -A x64 -DCMAKE_PREFIX_PATH=%Qt6_DIR% -DCMAKE_BUILD_TYPE=Release -Bbuild
+        cmake -G "Visual Studio 17 2022" -A x64 -DCMAKE_PREFIX_PATH=%Qt6_DIR% -DCMAKE_BUILD_TYPE=Release -DOPENHANTEK_BUILD_STORAGE_TESTS=ON -Bbuild
+
+    - name: Windows storage regression checks
+      shell: pwsh
+      run: |
+        cmake --build build --parallel 8 --config Release --target ExperimentStorageSmoke
+        ctest --test-dir build -C Release --output-on-failure -R experiment-storage-regression
 
     - name: Windows MSVC Build
       # GitHub hosts Windows runners on Standard_DS2_v2 virtual machines in Microsoft Azure:

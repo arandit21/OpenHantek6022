@@ -3,16 +3,18 @@
 #include "experimentcatalog.h"
 
 #include <QCryptographicHash>
+#include <QDebug>
 #include <QDir>
 #include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QStandardPaths>
+#include <QSettings>
 #include <QSqlError>
 #include <QSqlQuery>
 #include <QStringList>
+#include <QStorageInfo>
 #include <QTimer>
 #include <QUuid>
 
@@ -23,63 +25,231 @@ QString stableId( const QString &value ) {
     return QString::fromLatin1( QCryptographicHash::hash( value.toUtf8(), QCryptographicHash::Sha256 ).toHex() );
 }
 
+QString describeSqlError( const QSqlError &error, const QString &path, bool opening ) {
+    const QString detail = error.text().trimmed();
+    const QString lower = detail.toLower();
+    QString cause;
+    if ( lower.contains( QStringLiteral( "locked" ) ) || lower.contains( QStringLiteral( "busy" ) ) )
+        cause = QStringLiteral( "База занята или заблокирована" );
+    else if ( lower.contains( QStringLiteral( "unable to open" ) ) || lower.contains( QStringLiteral( "readonly" ) ) ||
+              lower.contains( QStringLiteral( "read-only" ) ) || lower.contains( QStringLiteral( "permission" ) ) )
+        cause = QStringLiteral( "Нет доступа к файлу индекса" );
+    else if ( lower.contains( QStringLiteral( "malformed" ) ) || lower.contains( QStringLiteral( "not a database" ) ) ||
+              lower.contains( QStringLiteral( "corrupt" ) ) )
+        cause = QStringLiteral( "SQLite сообщает о возможном повреждении базы" );
+    else
+        cause = opening ? QStringLiteral( "Не удалось открыть SQLite-базу" ) : QStringLiteral( "Ошибка схемы или SQL-запроса SQLite" );
+    return QStringLiteral( "%1: %2. Файл: %3. SQLite: %4 (код %5)" )
+        .arg( cause, error.driverText().trimmed(), path, detail, error.nativeErrorCode() );
+}
+
+bool testDirectoryWrite( const QString &directory, QString *errorMessage ) {
+    const QString probePath = QDir( directory ).filePath(
+        QStringLiteral( ".openhantek-catalog-probe-%1.tmp" ).arg( QUuid::createUuid().toString( QUuid::Id128 ) ) );
+    QFile probe( probePath );
+    if ( !probe.open( QIODevice::WriteOnly | QIODevice::NewOnly ) ) {
+        if ( errorMessage )
+            *errorMessage = QStringLiteral( "Нет доступа на запись в каталог SQLite %1: %2" ).arg( directory, probe.errorString() );
+        return false;
+    }
+    const QByteArray marker( "openhantek-sqlite-probe" );
+    const bool written = probe.write( marker ) == marker.size() && probe.flush();
+    const QString writeError = probe.errorString();
+    probe.close();
+    const bool removed = QFile::remove( probePath );
+    if ( !written || !removed ) {
+        if ( errorMessage )
+            *errorMessage = QStringLiteral( "Проверка доступа к SQLite-каталогу %1 не завершена: %2%3" )
+                                .arg( directory, written ? QString() : writeError,
+                                      removed ? QString() : QStringLiteral( "; не удалён пробный файл " ) + probePath );
+        return false;
+    }
+    return true;
+}
+
 } // namespace
 
 ExperimentCatalog::ExperimentCatalog( const QString &projectsRoot, QObject *parent )
     : QObject( parent ), projectsRootPath( QDir( projectsRoot ).absolutePath() ) {
-    const QString documents = QStandardPaths::writableLocation( QStandardPaths::DocumentsLocation );
-    if ( documents.isEmpty() ) {
-        databaseError = QStringLiteral( "Не удалось определить папку Документы для индекса библиотеки." );
-        return;
-    }
-    const QString libraryDirectory = QDir( documents ).filePath( "OpenHantek Laboratory/Library" );
-    if ( !QDir().mkpath( libraryDirectory ) ) {
-        databaseError = QStringLiteral( "Не удалось создать папку библиотеки: %1" ).arg( libraryDirectory );
-        return;
-    }
-    catalogFilePath = QDir( libraryDirectory ).filePath( "catalog.db" );
-    connectionName = QStringLiteral( "openhantek_catalog_%1" ).arg( QUuid::createUuid().toString( QUuid::Id128 ) );
-    database = QSqlDatabase::addDatabase( QStringLiteral( "QSQLITE" ), connectionName );
-    database.setDatabaseName( catalogFilePath );
-    if ( !initializeDatabase() ) {
-        const QString initialError = databaseError;
-        database.close();
-        database = QSqlDatabase();
-        QSqlDatabase::removeDatabase( connectionName );
-
-        // The SQLite file is a disposable index; preserve a damaged copy before rebuilding it.
-        const QString backupSuffix = QStringLiteral( ".corrupt-%1" ).arg( QUuid::createUuid().toString( QUuid::Id128 ) );
-        const QStringList sidecars = { QStringLiteral( "-wal" ), QStringLiteral( "-shm" ) };
-        const bool movedDatabase = QFile::rename( catalogFilePath, catalogFilePath + backupSuffix );
-        for ( const QString &sidecar : sidecars )
-            if ( QFileInfo::exists( catalogFilePath + sidecar ) )
-                QFile::rename( catalogFilePath + sidecar, catalogFilePath + backupSuffix + sidecar );
-
-        database = QSqlDatabase::addDatabase( QStringLiteral( "QSQLITE" ), connectionName );
-        database.setDatabaseName( catalogFilePath );
-        if ( movedDatabase && initializeDatabase() ) {
-            databaseError.clear();
-        } else {
-            if ( databaseError.isEmpty() )
-                databaseError = initialError;
-            else
-                databaseError = QStringLiteral( "%1; исходный индекс сохранён как повреждённая копия: %2" )
-                                    .arg( databaseError, catalogFilePath + backupSuffix );
-            database.close();
-        }
+    legacyProjectsRootPaths = QSettings().value( QStringLiteral( "experiment/legacyProjectsRoots" ) ).toStringList();
+    QString error;
+    if ( !configureDatabase( &error ) ) {
+        databaseError = error;
+        qCritical().noquote() << databaseError;
     }
 }
 
 ExperimentCatalog::~ExperimentCatalog() {
-    database.close();
-    database = QSqlDatabase();
-    if ( !connectionName.isEmpty() )
-        QSqlDatabase::removeDatabase( connectionName );
+    closeDatabase();
+}
+
+void ExperimentCatalog::closeDatabase() {
+    if ( !connectionName.isEmpty() ) {
+        const QString oldConnection = connectionName;
+        database.close();
+        database = QSqlDatabase();
+        connectionName.clear();
+        QSqlDatabase::removeDatabase( oldConnection );
+    }
+}
+
+bool ExperimentCatalog::configureDatabase( QString *errorMessage ) {
+    if ( projectsRootPath.isEmpty() ) {
+        databaseError = QStringLiteral( "Путь проектов пуст: невозможно определить каталог индекса." );
+        if ( errorMessage ) *errorMessage = databaseError;
+        return false;
+    }
+    const QString storageRoot = QFileInfo( projectsRootPath ).dir().absolutePath();
+    const QString libraryDirectory = QDir( storageRoot ).filePath( QStringLiteral( "Library" ) );
+    if ( !QDir().mkpath( libraryDirectory ) ) {
+        databaseError = QStringLiteral( "Не удалось создать каталог SQLite %1" ).arg( libraryDirectory );
+        if ( errorMessage ) *errorMessage = databaseError;
+        return false;
+    }
+    QStorageInfo storage( libraryDirectory );
+    storage.refresh();
+    if ( storage.isValid() && !storage.isReady() ) {
+        databaseError = QStringLiteral( "Диск каталога SQLite недоступен: %1 (устройство %2)" )
+                            .arg( libraryDirectory, QString::fromUtf8( storage.device() ) );
+        if ( errorMessage ) *errorMessage = databaseError;
+        return false;
+    }
+    QString accessError;
+    if ( !testDirectoryWrite( libraryDirectory, &accessError ) ) {
+        databaseError = accessError;
+        if ( errorMessage ) *errorMessage = databaseError;
+        return false;
+    }
+    if ( storage.isValid() && storage.bytesAvailable() == 0 ) {
+        databaseError = QStringLiteral( "На диске каталога SQLite нет свободного места: %1" ).arg( libraryDirectory );
+        if ( errorMessage ) *errorMessage = databaseError;
+        return false;
+    }
+    qInfo() << "OpenHantek SQLite storage probe passed:" << libraryDirectory
+            << "volume=" << storage.rootPath() << "device=" << storage.device()
+            << "filesystem=" << storage.fileSystemType() << "ready=" << storage.isReady()
+            << "bytesAvailable=" << storage.bytesAvailable();
+    const QString primaryCatalogPath = QDir( libraryDirectory ).filePath( QStringLiteral( "catalog.db" ) );
+    const QString configuredRecoveryPath = QSettings().value( QStringLiteral( "experiment/recoveredCatalogPath" ) ).toString();
+    const bool recoveryPathMatches = !configuredRecoveryPath.isEmpty() &&
+        QDir( QFileInfo( configuredRecoveryPath ).absolutePath() ).absolutePath().compare(
+#ifdef Q_OS_WIN
+            QDir( libraryDirectory ).absolutePath(), Qt::CaseInsensitive
+#else
+            QDir( libraryDirectory ).absolutePath(), Qt::CaseSensitive
+#endif
+        ) == 0 && QFileInfo::exists( configuredRecoveryPath );
+    catalogFilePath = recoveryPathMatches ? configuredRecoveryPath : primaryCatalogPath;
+    if ( !recoveryPathMatches && !configuredRecoveryPath.isEmpty() )
+        QSettings().remove( QStringLiteral( "experiment/recoveredCatalogPath" ) );
+    if ( !QSqlDatabase::isDriverAvailable( QStringLiteral( "QSQLITE" ) ) ) {
+        databaseError = QStringLiteral( "Драйвер Qt QSQLITE отсутствует. Проверьте сборку и каталог plugins/sqldrivers." );
+        if ( errorMessage ) *errorMessage = databaseError;
+        return false;
+    }
+    const auto openAt = [ this ]( const QString &filePath ) {
+        catalogFilePath = filePath;
+        connectionName = QStringLiteral( "openhantek_catalog_%1" ).arg( QUuid::createUuid().toString( QUuid::Id128 ) );
+        database = QSqlDatabase::addDatabase( QStringLiteral( "QSQLITE" ), connectionName );
+        database.setDatabaseName( catalogFilePath );
+        if ( initializeDatabase() )
+            return true;
+        closeDatabase();
+        return false;
+    };
+    if ( !openAt( catalogFilePath ) ) {
+        const QString initialError = databaseError;
+        const QString failedCatalogPath = catalogFilePath;
+        const bool tryNonDestructiveRecovery = databaseConfirmedCorrupt;
+        if ( tryNonDestructiveRecovery ) {
+            // Create an independent rebuildable index. The confirmed damaged database
+            // and its WAL/SHM sidecars remain untouched as evidence and recovery source.
+            const QString recoveredPath = QDir( libraryDirectory ).filePath(
+                QStringLiteral( "catalog.rebuilt-%1.db" ).arg( QUuid::createUuid().toString( QUuid::Id128 ) ) );
+            databaseConfirmedCorrupt = false;
+            if ( openAt( recoveredPath ) ) {
+                QSettings().setValue( QStringLiteral( "experiment/recoveredCatalogPath" ), recoveredPath );
+                qWarning().noquote() << QStringLiteral( "SQLite integrity check confirmed a damaged index. Original preserved at %1; using a fresh index at %2." )
+                                           .arg( failedCatalogPath, recoveredPath );
+                databaseError.clear();
+                return true;
+            }
+            databaseError = QStringLiteral( "%1. Не удалось создать новый индекс из-за ошибки: %2" )
+                                .arg( initialError, databaseError );
+        }
+        if ( errorMessage ) *errorMessage = databaseError;
+        return false;
+    }
+    databaseConfirmedCorrupt = false;
+    qInfo() << "OpenHantek SQLite catalog ready:" << catalogFilePath;
+    databaseError.clear();
+    return true;
+}
+
+bool ExperimentCatalog::setProjectsRoot( const QString &projectsRoot, QString *errorMessage ) {
+    const QString newRoot = QDir( projectsRoot ).absolutePath();
+    if ( newRoot.compare( projectsRootPath,
+#ifdef Q_OS_WIN
+                          Qt::CaseInsensitive
+#else
+                          Qt::CaseSensitive
+#endif
+                          ) == 0 && isReady() )
+        return true;
+    const QString oldRoot = projectsRootPath;
+    const QString oldDatabasePath = catalogFilePath;
+    const QStringList oldLegacyRoots = legacyProjectsRootPaths;
+    if ( !oldRoot.isEmpty() && QFileInfo( oldRoot ).isDir() && !legacyProjectsRootPaths.contains( oldRoot ) ) {
+        legacyProjectsRootPaths.append( oldRoot );
+        QSettings().setValue( QStringLiteral( "experiment/legacyProjectsRoots" ), legacyProjectsRootPaths );
+    }
+    closeDatabase();
+    projectsRootPath = newRoot;
+    QString error;
+    if ( configureDatabase( &error ) ) {
+        qInfo() << "OpenHantek catalog switched to" << catalogFilePath;
+        return true;
+    }
+
+    // Retain the previous usable index if the destination cannot be initialized.
+    closeDatabase();
+    projectsRootPath = oldRoot;
+    legacyProjectsRootPaths = oldLegacyRoots;
+    QSettings().setValue( QStringLiteral( "experiment/legacyProjectsRoots" ), legacyProjectsRootPaths );
+    QString restoreError;
+    const bool restored = configureDatabase( &restoreError );
+    if ( !restored )
+        databaseError = QStringLiteral( "%1. Прежний индекс также не открылся: %2" ).arg( error, restoreError );
+    else
+        databaseError.clear();
+    catalogFilePath = restored ? catalogFilePath : oldDatabasePath;
+    if ( errorMessage )
+        *errorMessage = error;
+    return false;
 }
 
 bool ExperimentCatalog::initializeDatabase() {
+    databaseConfirmedCorrupt = false;
     if ( !database.open() ) {
-        databaseError = QStringLiteral( "Не удалось открыть индекс библиотеки: %1" ).arg( database.lastError().text() );
+        databaseError = describeSqlError( database.lastError(), catalogFilePath, true );
+        return false;
+    }
+    QSqlQuery initialIntegrityCheck( database );
+    if ( !initialIntegrityCheck.exec( QStringLiteral( "PRAGMA integrity_check" ) ) || !initialIntegrityCheck.next() ) {
+        const QString detail = initialIntegrityCheck.lastError().text();
+        const QString lower = detail.toLower();
+        databaseConfirmedCorrupt = lower.contains( QStringLiteral( "malformed" ) ) ||
+                                   lower.contains( QStringLiteral( "not a database" ) ) ||
+                                   lower.contains( QStringLiteral( "corrupt" ) );
+        databaseError = QStringLiteral( "Не удалось проверить целостность индекса до обновления схемы: %1. Файл: %2" )
+                            .arg( detail, catalogFilePath );
+        return false;
+    }
+    const QString initialIntegrityResult = initialIntegrityCheck.value( 0 ).toString();
+    if ( initialIntegrityResult.compare( QStringLiteral( "ok" ), Qt::CaseInsensitive ) != 0 ) {
+        databaseConfirmedCorrupt = true;
+        databaseError = QStringLiteral( "SQLite integrity_check подтвердила повреждение (%1). Файл сохранён без изменений: %2" )
+                            .arg( initialIntegrityResult, catalogFilePath );
         return false;
     }
     QSqlQuery query( database );
@@ -100,7 +270,26 @@ bool ExperimentCatalog::initializeDatabase() {
     };
     for ( const QString &statement : statements ) {
         if ( !query.exec( statement ) ) {
-            databaseError = QStringLiteral( "Ошибка базы картотеки: %1" ).arg( query.lastError().text() );
+            QSqlError sqlError = query.lastError();
+            QString diagnosis = describeSqlError( sqlError, catalogFilePath, false );
+            if ( database.isOpen() ) {
+                QSqlQuery integrity( database );
+                if ( integrity.exec( QStringLiteral( "PRAGMA integrity_check" ) ) && integrity.next() ) {
+                    const QString check = integrity.value( 0 ).toString();
+                    if ( check.compare( QStringLiteral( "ok" ), Qt::CaseInsensitive ) != 0 ) {
+                        diagnosis += QStringLiteral( ". Результат PRAGMA integrity_check: %1" ).arg( check );
+                        databaseConfirmedCorrupt = true;
+                    }
+                } else if ( !integrity.lastError().text().isEmpty() ) {
+                    const QString integrityError = integrity.lastError().text();
+                    diagnosis += QStringLiteral( ". Проверка целостности не выполнена: %1" ).arg( integrityError );
+                    const QString lowerIntegrityError = integrityError.toLower();
+                    databaseConfirmedCorrupt = lowerIntegrityError.contains( QStringLiteral( "malformed" ) ) ||
+                                               lowerIntegrityError.contains( QStringLiteral( "not a database" ) ) ||
+                                               lowerIntegrityError.contains( QStringLiteral( "corrupt" ) );
+                }
+            }
+            databaseError = diagnosis;
             return false;
         }
     }
@@ -203,12 +392,24 @@ void ExperimentCatalog::startRescan() {
     }
     pendingExperiments.clear();
     fileIterator.reset();
-    const QDir root( projectsRootPath );
-    const QFileInfoList directories = root.entryInfoList( QDir::Dirs | QDir::NoDotAndDotDot | QDir::NoSymLinks,
-                                                          QDir::Name | QDir::IgnoreCase );
-    for ( const QFileInfo &directory : directories ) {
-        if ( QFileInfo( directory.dir().filePath( directory.fileName() + "/experiment.json" ) ).isFile() )
-            pendingExperiments.append( directory.absoluteFilePath() );
+    QStringList roots = legacyProjectsRootPaths;
+    roots.prepend( projectsRootPath );
+    QStringList visitedRoots;
+    for ( const QString &rootPath : roots ) {
+        const QString absoluteRoot = QDir( rootPath ).absolutePath();
+        if ( visitedRoots.contains( absoluteRoot, pathCaseSensitivity() ) )
+            continue;
+        visitedRoots.append( absoluteRoot );
+        const QDir root( absoluteRoot );
+        if ( !root.exists() )
+            continue;
+        const QFileInfoList directories = root.entryInfoList( QDir::Dirs | QDir::NoDotAndDotDot | QDir::NoSymLinks,
+                                                              QDir::Name | QDir::IgnoreCase );
+        for ( const QFileInfo &directory : directories ) {
+            if ( QFileInfo( directory.dir().filePath( directory.fileName() + "/experiment.json" ) ).isFile() &&
+                 !pendingExperiments.contains( directory.absoluteFilePath(), pathCaseSensitivity() ) )
+                pendingExperiments.append( directory.absoluteFilePath() );
+        }
     }
     scanGeneration = QUuid::createUuid().toString( QUuid::WithoutBraces );
     completedExperiments = 0;

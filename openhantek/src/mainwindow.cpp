@@ -93,6 +93,14 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
         "QToolButton:hover { background: #e5edf7; }"
         "QToolButton:checked { background: #d7e9ff; color: #075fc4; }"
         "QToolBar::separator { height: 1px; background: #d9e0e8; margin: 4px 8px; }" ) );
+    setStyleSheet( QStringLiteral(
+        "QCheckBox::indicator { width: 16px; height: 16px; border: 1px solid #94a3b8; border-radius: 3px; background: #ffffff; }"
+        "QCheckBox::indicator:hover { border-color: #2563eb; background: #eff6ff; }"
+        "QCheckBox::indicator:checked { border-color: #2563eb; background: #2563eb; image: url(:/images/lighttheme/check.svg); }"
+        "QCheckBox::indicator:checked:hover { background: #1d4ed8; }"
+        "QCheckBox::indicator:disabled { border-color: #cbd5e1; background: #e2e8f0; }"
+        "QCheckBox::indicator:checked:disabled { border-color: #94a3b8; background: #94a3b8; image: url(:/images/lighttheme/check.svg); }"
+        "QCheckBox:focus { outline: 2px solid #60a5fa; outline-offset: 2px; }" ) );
     // This workspace design is intentionally light; trace colors and the
     // oscilloscope's own plot rendering remain controlled by DsoWidget.
     QPalette workspacePalette = palette();
@@ -267,6 +275,11 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
     addDockWidget( Qt::RightDockWidgetArea, horizontalDock );
     addDockWidget( Qt::RightDockWidgetArea, triggerDock );
     addDockWidget( Qt::RightDockWidgetArea, spectrumDock );
+    QAction *analysisAction = spectrumDock->toggleViewAction();
+    analysisAction->setText( QStringLiteral( "Анализ" ) );
+    analysisAction->setIcon( QIcon( iconPath + "analysis.svg" ) );
+    analysisAction->setToolTip( QStringLiteral( "Показать или скрыть существующие FFT-каналы и параметры спектра" ) );
+    ui->toolBar->addAction( analysisAction );
 
     restoreGeometry( dsoSettings->mainWindowGeometry );
 
@@ -771,13 +784,13 @@ void MainWindow::toggleVideoRecording() {
             QMessageBox::critical( this, tr( "Запись MP4" ), error.isEmpty() ? tr( "Не удалось начать запись видео." ) : error );
             return;
         }
-        videoStartedAtMs = QDateTime::currentMSecsSinceEpoch();
+        videoElapsed.start();
         videoFrameTimer->start( qMax( 1, 1000 / videoFps ) );
         recordVideoAction->setText( tr( "Стоп видео" ) );
         statusBar()->showMessage( tr( "Запись MP4 начата: %1" ).arg( path ) );
         return;
     }
-    if ( videoRecorder->isRecording() ) {
+    if ( videoRecorder->isBusy() ) {
         videoFrameTimer->stop();
         QString error;
         if ( !videoRecorder->stop( &error ) ) {
@@ -787,8 +800,9 @@ void MainWindow::toggleVideoRecording() {
             if ( !experimentManager->registerVideo( path, &error ) )
                 statusBar()->showMessage( tr( "Видео записано, но не добавлено в библиотеку: %1" ).arg( error ), 10000 );
             else
-                statusBar()->showMessage( tr( "Видео сохранено: %1 (%2 с)" ).arg( path ).arg( videoStartedAtMs > 0
-                    ? ( QDateTime::currentMSecsSinceEpoch() - videoStartedAtMs ) / 1000 : 0 ), 8000 );
+                statusBar()->showMessage( tr( "Видео сохранено: %1 (%2 с, пропущено кадров: %3)" )
+                                              .arg( path ).arg( videoElapsed.isValid() ? videoElapsed.elapsed() / 1000 : 0 )
+                                              .arg( videoRecorder->droppedFrameCount() ), 8000 );
             experimentCatalog->startRescan();
         }
     }
@@ -800,21 +814,32 @@ void MainWindow::toggleVideoRecording() {
 void MainWindow::appendVideoFrame() {
     if ( !videoRecorder || !videoRecorder->isRecording() ) {
         videoFrameTimer->stop();
+        if ( videoRecorder && videoRecorder->isBusy() ) {
+            QString error;
+            videoRecorder->stop( &error );
+            recordVideoAction->setChecked( false );
+            recordVideoAction->setText( tr( "Видео" ) );
+            recordVideoAction->setIcon( videoRecordIcon );
+            if ( !error.isEmpty() )
+                QMessageBox::critical( this, tr( "Запись MP4" ), error );
+        }
         return;
     }
     QImage frame = grab().toImage();
-    if ( frame.size() != videoSize )
-        frame = frame.scaled( videoSize, Qt::IgnoreAspectRatio, Qt::SmoothTransformation );
     QString error;
     if ( !videoRecorder->appendFrame( frame, &error ) ) {
         videoFrameTimer->stop();
-        videoRecorder->stop();
+        QString finalizeError;
+        videoRecorder->stop( &finalizeError );
         recordVideoAction->setChecked( false );
         recordVideoAction->setText( tr( "Видео" ) );
-        QMessageBox::critical( this, tr( "Запись MP4" ), error );
+        recordVideoAction->setIcon( videoRecordIcon );
+        QMessageBox::critical( this, tr( "Запись MP4" ), finalizeError.isEmpty() ? error : finalizeError );
     } else {
-        const qint64 seconds = ( QDateTime::currentMSecsSinceEpoch() - videoStartedAtMs ) / 1000;
-        statusBar()->showMessage( tr( "Запись MP4 · %1 · %2 кадр/с" ).arg( seconds ).arg( videoFps ) );
+        const qint64 seconds = videoElapsed.elapsed() / 1000;
+        const quint64 dropped = videoRecorder->droppedFrameCount();
+        const QString dropText = dropped ? tr( " · пропущено %1 кадров" ).arg( dropped ) : QString();
+        statusBar()->showMessage( tr( "Запись MP4 · %1 с · %2 кадр/с%3" ).arg( seconds ).arg( videoFps ).arg( dropText ) );
     }
 }
 
@@ -1117,7 +1142,7 @@ void MainWindow::closeEvent( QCloseEvent *event ) {
         statusBar()->showMessage( tr( "Завершение файла записи перед закрытием…" ) );
         return;
     }
-    if ( videoRecorder && videoRecorder->isRecording() ) {
+    if ( videoRecorder && videoRecorder->isBusy() ) {
         videoFrameTimer->stop();
         QString error;
         if ( !videoRecorder->stop( &error ) )

@@ -87,7 +87,7 @@ class MainWindow : public QMainWindow {
     bool resumeSamplingAfterPlayback = false;
     int videoFps = 30;
     QSize videoSize;
-    qint64 videoStartedAtMs = 0;
+    QElapsedTimer videoElapsed;
     bool closingAfterRecording = false;
 
     // Taking screenshots

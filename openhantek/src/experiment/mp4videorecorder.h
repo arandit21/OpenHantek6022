@@ -5,10 +5,16 @@
 #include <QImage>
 #include <QString>
 #include <QSize>
-#include <QString>
 
-/// Small synchronous MP4 recorder backed by Windows Media Foundation.
-/// Frames are the rendered scope widget; no oscilloscope samples are encoded here.
+#include <atomic>
+#include <condition_variable>
+#include <chrono>
+#include <deque>
+#include <mutex>
+#include <thread>
+
+/// Bounded asynchronous MP4 recorder backed by Windows Media Foundation.
+/// Frames are the rendered scope window; encoding is kept off the GUI thread.
 class Mp4VideoRecorder {
   public:
     Mp4VideoRecorder() = default;
@@ -20,17 +26,28 @@ class Mp4VideoRecorder {
     bool start( const QString &path, const QSize &frameSize, int framesPerSecond, QString *errorMessage = nullptr );
     bool appendFrame( const QImage &frame, QString *errorMessage = nullptr );
     bool stop( QString *errorMessage = nullptr );
-    bool isRecording() const { return recording; }
+    bool isRecording() const { return recording.load(); }
+    bool isBusy() const { return worker.joinable(); }
+    quint64 droppedFrameCount() const { return droppedFrames.load(); }
     QString filePath() const { return outputPath; }
 
   private:
-    bool recording = false;
-    quint64 frameIndex = 0;
-    int frameRate = 10;
-    QSize outputSize;
+    struct QueuedFrame {
+        QImage image;
+        qint64 timestamp100ns = 0;
+    };
+    static constexpr std::size_t MaxQueuedFrames = 4;
+    std::atomic_bool recording{ false };
+    std::atomic< quint64 > droppedFrames{ 0 };
+    std::mutex queueMutex;
+    std::condition_variable queueChanged;
+    std::condition_variable startupChanged;
+    std::deque< QueuedFrame > frameQueue;
+    std::chrono::steady_clock::time_point recordingStarted;
+    bool stopRequested = false;
+    bool startupCompleted = false;
+    QString workerError;
     QString outputPath;
-#if defined(Q_OS_WIN) && defined(_MSC_VER)
-    struct NativeState;
-    NativeState *native = nullptr;
-#endif
+
+    void encodeFrames( const QString &path, const QSize &frameSize, int framesPerSecond );
 };

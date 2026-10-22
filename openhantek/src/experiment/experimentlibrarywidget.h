@@ -42,6 +42,7 @@ class ExperimentLibraryWidget : public QWidget {
     void deleteSelected();
     void restoreFromTrash();
     void emptyTrash();
+    void chooseStorageRoot();
     void showContextMenu( const QPoint &position );
 
   private:
@@ -65,11 +66,13 @@ class ExperimentLibraryWidget : public QWidget {
     QLabel *previewImage = nullptr;
     QTableWidget *dataPreview = nullptr;
     QLabel *indexStatus = nullptr;
+    QPushButton *indexDetailsButton = nullptr;
     QPushButton *openButton = nullptr;
     QPushButton *showFolderButton = nullptr;
     QVector< ExperimentCatalogItem > rows;
     ExperimentCatalogItem selectedItem;
     bool hasSelection = false;
+    QString lastIndexError;
 
     QString selectedCategory() const;
     QVector< ExperimentCatalogItem > selectedRecords() const;

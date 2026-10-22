@@ -193,6 +193,10 @@ ExperimentLibraryWidget::ExperimentLibraryWidget( ExperimentCatalog *catalog, Ex
     emptyTrashButton->setText( QString() );
     emptyTrashButton->setFixedWidth( 32 );
     emptyTrashButton->setToolTip( QStringLiteral( "Очистить корзину" ) );
+    auto *storageButton = new QPushButton( this );
+    storageButton->setIcon( style()->standardIcon( QStyle::SP_DirOpenIcon ) );
+    storageButton->setFixedSize( 32, 30 );
+    storageButton->setToolTip( QStringLiteral( "Выбрать и проверить папку хранения экспериментов" ) );
     toolbar->addWidget( heading );
     toolbar->addSpacing( 10 );
     toolbar->addWidget( searchEdit, 1 );
@@ -203,6 +207,7 @@ ExperimentLibraryWidget::ExperimentLibraryWidget( ExperimentCatalog *catalog, Ex
     toolbar->addWidget( rescanButton );
     toolbar->addWidget( trashButton );
     toolbar->addWidget( emptyTrashButton );
+    toolbar->addWidget( storageButton );
     root->addLayout( toolbar );
 
     auto *splitter = new QSplitter( Qt::Horizontal, this );
@@ -321,7 +326,13 @@ ExperimentLibraryWidget::ExperimentLibraryWidget( ExperimentCatalog *catalog, Ex
     indexStatus = new QLabel( this );
     indexStatus->setObjectName( "libraryStatus" );
     indexStatus->setWordWrap( true );
-    root->addWidget( indexStatus );
+    auto *statusRow = new QHBoxLayout;
+    indexDetailsButton = new QPushButton( QStringLiteral( "Подробнее" ), this );
+    indexDetailsButton->setFixedHeight( 27 );
+    indexDetailsButton->hide();
+    statusRow->addWidget( indexStatus, 1 );
+    statusRow->addWidget( indexDetailsButton );
+    root->addLayout( statusRow );
 
     connect( navigation, &QTreeWidget::currentItemChanged, this, [ this ]() { refreshRecords(); } );
     connect( searchEdit, &QLineEdit::textChanged, this, [ this ]() { refreshRecords(); } );
@@ -348,6 +359,13 @@ ExperimentLibraryWidget::ExperimentLibraryWidget( ExperimentCatalog *catalog, Ex
     connect( rescanButton, &QPushButton::clicked, this, &ExperimentLibraryWidget::startIndexRefresh );
     connect( trashButton, &QPushButton::clicked, this, &ExperimentLibraryWidget::restoreFromTrash );
     connect( emptyTrashButton, &QPushButton::clicked, this, &ExperimentLibraryWidget::emptyTrash );
+    connect( storageButton, &QPushButton::clicked, this, &ExperimentLibraryWidget::chooseStorageRoot );
+    connect( indexDetailsButton, &QPushButton::clicked, this, [ this ] {
+        QMessageBox details( QMessageBox::Warning, QStringLiteral( "Проблема хранилища" ),
+                             QStringLiteral( "Каталог библиотеки сейчас недоступен." ), QMessageBox::Ok, this );
+        details.setDetailedText( lastIndexError );
+        details.exec();
+    } );
     auto *deleteShortcut = new QShortcut( QKeySequence::Delete, table );
     connect( deleteShortcut, &QShortcut::activated, this, &ExperimentLibraryWidget::deleteSelected );
     auto *tileDeleteShortcut = new QShortcut( QKeySequence::Delete, tiles );
@@ -728,9 +746,48 @@ void ExperimentLibraryWidget::startIndexRefresh() {
     catalog->startRescan();
 }
 
+void ExperimentLibraryWidget::chooseStorageRoot() {
+    const QString selected = QFileDialog::getExistingDirectory(
+        this, QStringLiteral( "Папка хранилища OpenHantek Laboratory" ), manager->storageRoot(),
+        QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks );
+    if ( selected.isEmpty() )
+        return;
+
+    const QString previousRoot = manager->storageRoot();
+    const QString previousActive = manager->activeExperiment();
+    QString error;
+    if ( !manager->setStorageRoot( selected, &error ) ) {
+        QMessageBox::critical( this, QStringLiteral( "Хранилище недоступно" ), error );
+        return;
+    }
+    if ( !catalog->setProjectsRoot( manager->projectsRoot(), &error ) ) {
+        QString rollbackError;
+        manager->setStorageRoot( previousRoot, &rollbackError );
+        if ( !previousActive.isEmpty() )
+            manager->activateExperiment( previousActive, &rollbackError );
+        QMessageBox::critical( this, QStringLiteral( "Не удалось открыть каталог SQLite" ),
+                               rollbackError.isEmpty() ? error : error + QStringLiteral( "\n\n" ) + rollbackError );
+        setIndexStatus( error, true );
+        return;
+    }
+    setIndexStatus( QStringLiteral( "Хранилище проверено: %1. Старые эксперименты остаются на прежнем диске и индексируются." )
+                        .arg( QDir( selected ).absolutePath() ) );
+    emit activeExperimentChanged( QString() );
+    catalog->startRescan();
+}
+
 void ExperimentLibraryWidget::setIndexStatus( const QString &text, bool error ) {
-    indexStatus->setText( text );
-    indexStatus->setStyleSheet( error ? QStringLiteral( "color: #ff8b80;" ) : QString() );
+    if ( error ) {
+        lastIndexError = text;
+        indexStatus->setText( QStringLiteral( "Индекс недоступен" ) );
+        indexStatus->setStyleSheet( QStringLiteral( "color: #b42318; font-weight: 600;" ) );
+        indexDetailsButton->show();
+    } else {
+        lastIndexError.clear();
+        indexStatus->setText( text );
+        indexStatus->setStyleSheet( QStringLiteral( "color: #475569;" ) );
+        indexDetailsButton->hide();
+    }
 }
 
 void ExperimentLibraryWidget::previewSelected() {

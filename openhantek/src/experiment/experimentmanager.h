@@ -14,7 +14,11 @@ class ExperimentManager {
     ExperimentManager();
 
     QString projectsRoot() const { return projectsRootPath; }
+    QString storageRoot() const { return storageRootPath; }
     QString activeExperiment() const { return activeExperimentPath; }
+
+    /// Select and persist a writable base directory for new experiment projects.
+    bool setStorageRoot( const QString &path, QString *errorMessage = nullptr );
 
     /// Create a new experiment folder with the standard directory tree and manifest.
     bool createExperiment( const QString &name, const QString &description = QString(), QString *errorMessage = nullptr );
@@ -37,6 +41,7 @@ class ExperimentManager {
     bool registerDataFile( const QString &absoluteDataPath, QString *errorMessage = nullptr );
 
   private:
+    QString storageRootPath;
     QString projectsRootPath;
     QString activeExperimentPath;
     QString startupError;
