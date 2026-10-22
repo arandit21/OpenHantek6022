@@ -656,7 +656,7 @@ MainWindow::~MainWindow() {
 
 void MainWindow::toggleDataRecording() {
     if ( recordDataAction->isChecked() ) {
-        if ( !dsoControl->isSamplingUI() ) {
+        if ( !ui->actionSampling->isChecked() ) {
             recordDataAction->setChecked( false );
             QMessageBox::information( this, tr( "Запись измерений" ),
                                       tr( "Сначала запустите непрерывный захват осциллографа." ) );
@@ -779,7 +779,7 @@ void MainWindow::openRecording( const QString &path ) {
         QMessageBox::critical( this, tr( "Воспроизведение OHRAW" ), error );
         return;
     }
-    resumeSamplingAfterPlayback = dsoControl->isSamplingUI();
+    resumeSamplingAfterPlayback = ui->actionSampling->isChecked();
     if ( resumeSamplingAfterPlayback )
         dsoControl->enableSamplingUI( false );
 
