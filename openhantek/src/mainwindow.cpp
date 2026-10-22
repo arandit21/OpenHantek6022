@@ -29,6 +29,7 @@
 
 #include <QDesktopServices>
 #include <QDateTime>
+#include <QCloseEvent>
 #include <QDockWidget>
 #include <QComboBox>
 #include <QDir>
@@ -307,11 +308,11 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
                  recordDataAction->setText( tr( "Запись данных" ) );
                  recordDataAction->setIcon( dataRecordIcon );
                  QString error;
-                 if ( !experimentManager->registerDataFile( path, &error ) )
+                 if ( !this->experimentManager->registerDataFile( path, &error ) )
                      statusBar()->showMessage( tr( "Файл записан, ошибка регистрации в библиотеке: %1" ).arg( error ), 12000 );
                  else
                      statusBar()->showMessage( tr( "OHRAW записан: %1 блоков; пропущено: %2" ).arg( frames ).arg( dropped ), 8000 );
-                 experimentCatalog->startRescan();
+                 this->experimentCatalog->startRescan();
                  if ( closingAfterRecording )
                      QTimer::singleShot( 0, this, &QWidget::close );
              } );
@@ -908,7 +909,8 @@ void MainWindow::setDeviceCommandUiEnabled( bool enabled ) {
 void MainWindow::screenShot( screenshotType_t screenshotType, bool autoSafe ) {
     if ( dsoSettings->scope.verboseLevel > 2 )
         qDebug() << "  MainWindow::screenShot()" << screenshotType << autoSafe;
-    QWidget *activeWindow = screenshotType == SCREENSHOT ? this : dsoWidget;
+    QWidget *activeWindow = screenshotType == SCREENSHOT ? static_cast< QWidget * >( this )
+                                                         : static_cast< QWidget * >( dsoWidget );
     QPixmap screenshot( activeWindow->size() ); // prepare a pixmap with the correct size
     int sw = screenshot.width();
     int sh = screenshot.height();
