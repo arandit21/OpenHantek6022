@@ -380,6 +380,7 @@ jobs:
       shell: pwsh
       run: |
         cmake --build build --parallel 8 --config Release --target ExperimentStorageSmoke
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
         ctest --test-dir build -C Release --output-on-failure -R experiment-storage-regression
 
     - name: Windows MSVC Build

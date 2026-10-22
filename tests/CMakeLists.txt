@@ -10,6 +10,7 @@ add_executable(ExperimentStorageSmoke
     ../openhantek/src/experiment/rawrecordingengine.h
     ../openhantek/src/experiment/rawplaybackengine.cpp
     ../openhantek/src/experiment/rawplaybackengine.h
+    ../openhantek/src/post/processor.cpp
     ../openhantek/src/post/ppresult.cpp
     ../openhantek/src/post/ppresult.h
 )
