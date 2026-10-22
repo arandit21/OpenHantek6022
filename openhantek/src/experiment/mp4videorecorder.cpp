@@ -92,8 +92,8 @@ bool Mp4VideoRecorder::start( const QString &path, const QSize &frameSize, int f
 
     native = new NativeState;
     native->comInitialized = initializedComHere;
-    const std::wstring outputPath = QDir::toNativeSeparators( path ).toStdWString();
-    result = MFCreateSinkWriterFromURL( outputPath.c_str(), nullptr, nullptr, &native->writer );
+    const std::wstring nativeOutputPath = QDir::toNativeSeparators( path ).toStdWString();
+    result = MFCreateSinkWriterFromURL( nativeOutputPath.c_str(), nullptr, nullptr, &native->writer );
     if ( FAILED( result ) )
         goto failed;
 
