@@ -83,6 +83,35 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
     elapsedTime.start();
 
     ui->setupUi( this );
+    // Variant 3 keeps the oscilloscope plotting widget intact while moving
+    // navigation to a compact, vertically docked laboratory tool rail.
+    ui->toolBar->setOrientation( Qt::Vertical );
+    addToolBar( Qt::LeftToolBarArea, ui->toolBar );
+    ui->toolBar->setToolButtonStyle( Qt::ToolButtonTextUnderIcon );
+    ui->toolBar->setIconSize( QSize( 24, 24 ) );
+    ui->toolBar->setMovable( false );
+    ui->toolBar->setFloatable( false );
+    ui->toolBar->setMinimumWidth( 88 );
+    ui->toolBar->setMaximumWidth( 104 );
+    ui->toolBar->setStyleSheet( QStringLiteral(
+        "QToolBar { background: #f4f6f9; border: 0; border-right: 1px solid #d9e0e8; spacing: 3px; padding: 6px 4px; }"
+        "QToolButton { min-width: 74px; max-width: 92px; min-height: 54px; padding: 4px 2px; border-radius: 5px; }"
+        "QToolButton:hover { background: #e5edf7; }"
+        "QToolButton:checked { background: #d7e9ff; color: #075fc4; }"
+        "QToolBar::separator { height: 1px; background: #d9e0e8; margin: 4px 8px; }" ) );
+    // This workspace design is intentionally light; trace colors and the
+    // oscilloscope's own plot rendering remain controlled by DsoWidget.
+    QPalette workspacePalette = palette();
+    workspacePalette.setColor( QPalette::Window, QColor( 246, 248, 251 ) );
+    workspacePalette.setColor( QPalette::WindowText, QColor( 30, 41, 59 ) );
+    workspacePalette.setColor( QPalette::Base, QColor( 255, 255, 255 ) );
+    workspacePalette.setColor( QPalette::AlternateBase, QColor( 241, 245, 249 ) );
+    workspacePalette.setColor( QPalette::Text, QColor( 30, 41, 59 ) );
+    workspacePalette.setColor( QPalette::Button, QColor( 244, 246, 249 ) );
+    workspacePalette.setColor( QPalette::ButtonText, QColor( 30, 41, 59 ) );
+    workspacePalette.setColor( QPalette::Highlight, QColor( 191, 219, 254 ) );
+    workspacePalette.setColor( QPalette::HighlightedText, QColor( 15, 23, 42 ) );
+    setPalette( workspacePalette );
     iconPause = QIcon( iconPath + "pause.svg" );
     iconPlay = QIcon( iconPath + "play.svg" );
     ui->actionSampling->setIcon( iconPause );
@@ -141,6 +170,7 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
     ui->actionExit->setToolTip( tr( "Exit the application" ) );
     ui->actionSettings->setIcon( QIcon( iconPath + "settings.svg" ) );
     ui->actionSettings->setToolTip( tr( "Define scope settings, analysis parameters and colors" ) );
+    ui->actionSettings->setText( tr( "Настройки" ) );
     ui->actionCalibrateOffset->setIcon( QIcon( iconPath + "offset.svg" ) );
     ui->actionCalibrateOffset->setToolTip( tr( "Short-circuit both inputs and slowly select all voltage gain settings" ) );
     ui->actionManualCommand->setIcon( QIcon( iconPath + "terminal.svg" ) );
@@ -255,13 +285,15 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
     libraryWidget = new ExperimentLibraryWidget( experimentCatalog, experimentManager, this );
     libraryDock = new QDockWidget( tr( "Библиотека исследований" ), this );
     libraryDock->setObjectName( QStringLiteral( "researchLibraryDock" ) );
+    libraryDock->setMinimumHeight( 205 );
     libraryDock->setWidget( libraryWidget );
     addDockWidget( Qt::BottomDockWidgetArea, libraryDock );
-    libraryDock->hide();
-    restoreState( dsoSettings->mainWindowState );
     auto *libraryAction = new QAction( tr( "Библиотека" ), this );
     libraryAction->setCheckable( true );
+    libraryAction->setIcon( QIcon( iconPath + "book.svg" ) );
     libraryAction->setToolTip( tr( "Открыть библиотеку экспериментов, фотографий, видео и записей сигналов" ) );
+    ui->toolBar->addSeparator();
+    ui->toolBar->addAction( ui->actionSettings );
     ui->toolBar->addSeparator();
     ui->toolBar->addAction( libraryAction );
     connect( libraryAction, &QAction::toggled, libraryDock, &QDockWidget::setVisible );
@@ -275,28 +307,40 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
     experimentCatalog->startRescan();
 
     auto *screenshotAction = new QAction( QIcon( iconPath + "camera.svg" ), tr( "Скриншот" ), this );
+    screenshotAction->setText( tr( "Снимок" ) );
     screenshotAction->setToolTip( tr( "Сохранить снимок рабочего пространства в активный эксперимент" ) );
-    ui->toolBar->addSeparator();
-    ui->toolBar->addAction( screenshotAction );
     connect( screenshotAction, &QAction::triggered, this, [ this ] { screenShot( SCREENSHOT, true ); } );
 
     recordDataAction = new QAction( tr( "Запись данных" ), this );
     recordDataAction->setCheckable( true );
     dataRecordIcon = QIcon( iconPath + "exporter.svg" );
     recordDataAction->setIcon( dataRecordIcon );
+    recordDataAction->setText( tr( "Данные" ) );
     recordDataAction->setToolTip( tr( "Записывать измерения CH1 и CH2 в формате OHRAW" ) );
-    ui->toolBar->addAction( recordDataAction );
     connect( recordDataAction, &QAction::triggered, this, &MainWindow::toggleDataRecording );
 
-    recordVideoAction = new QAction( tr( "Запись видео MP4" ), this );
+    recordVideoAction = new QAction( tr( "Видео" ), this );
     recordVideoAction->setCheckable( true );
     videoRecordIcon = QIcon( iconPath + "camera.svg" );
     recordVideoAction->setIcon( videoRecordIcon );
     recordVideoAction->setToolTip( tr( "Снимать окно осциллографа в файл MP4" ) );
+    ui->toolBar->addSeparator();
+    ui->toolBar->addAction( screenshotAction );
     ui->toolBar->addAction( recordVideoAction );
+    ui->toolBar->addAction( recordDataAction );
+    const bool restoredWorkspace = restoreState( dsoSettings->mainWindowState, 2 );
+    if ( !restoredWorkspace ) {
+        // A versioned layout invalidates the old top-toolbar arrangement once.
+        // Subsequent starts restore the user's own dock proportions and visibility.
+        libraryDock->show();
+        QTimer::singleShot( 0, this, [ this ] {
+            resizeDocks( { libraryDock }, { qMax( 235, height() / 3 ) }, Qt::Vertical );
+        } );
+    }
+    libraryAction->setChecked( !libraryDock->isHidden() );
     recordVideoAction->setEnabled( Mp4VideoRecorder::isSupported() );
     if ( !Mp4VideoRecorder::isSupported() )
-        recordVideoAction->setText( tr( "Запись видео недоступна" ) );
+        recordVideoAction->setText( tr( "Нет видео" ) );
     connect( recordVideoAction, &QAction::triggered, this, &MainWindow::toggleVideoRecording );
     videoFrameTimer = new QTimer( this );
     connect( videoFrameTimer, &QTimer::timeout, this, &MainWindow::appendVideoFrame );
@@ -305,7 +349,7 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
              [ this ]( const QString &path, quint64 frames, quint64 dropped ) {
                  recordDataAction->setChecked( false );
                  recordDataAction->setEnabled( true );
-                 recordDataAction->setText( tr( "Запись данных" ) );
+                 recordDataAction->setText( tr( "Данные" ) );
                  recordDataAction->setIcon( dataRecordIcon );
                  QString error;
                  if ( !this->experimentManager->registerDataFile( path, &error ) )
@@ -319,7 +363,7 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
     connect( rawRecorder, &RawRecordingEngine::recordingFailed, this, [ this ]( const QString &message ) {
         recordDataAction->setChecked( false );
         recordDataAction->setEnabled( true );
-        recordDataAction->setText( tr( "Запись данных" ) );
+        recordDataAction->setText( tr( "Данные" ) );
         recordDataAction->setIcon( dataRecordIcon );
         QMessageBox::critical( this, tr( "Запись измерений" ), message );
         if ( closingAfterRecording )
@@ -488,11 +532,11 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
         QSignalBlocker blocker( ui->actionSampling );
         if ( enabled ) {
             ui->actionSampling->setIcon( iconPause );
-            ui->actionSampling->setText( tr( "Stop" ) );
+            ui->actionSampling->setText( tr( "Стоп" ) );
             ui->actionSampling->setStatusTip( tr( "Stop the oscilloscope" ) );
         } else {
             ui->actionSampling->setIcon( iconPlay );
-            ui->actionSampling->setText( tr( "Start" ) );
+            ui->actionSampling->setText( tr( "Пуск" ) );
             ui->actionSampling->setStatusTip( tr( "Start the oscilloscope" ) );
         }
         ui->actionSampling->setChecked( enabled );
@@ -519,7 +563,7 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
         if ( !configFileName.isEmpty() ) {
             dsoSettings->loadFromFile( configFileName );
             restoreGeometry( dsoSettings->mainWindowGeometry );
-            restoreState( dsoSettings->mainWindowState );
+            restoreState( dsoSettings->mainWindowState, 2 );
 
             emit settingsLoaded( &dsoSettings->scope, spec );
 
@@ -534,7 +578,7 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
 
     connect( ui->actionSave, &QAction::triggered, this, [ this ]() {
         dsoSettings->mainWindowGeometry = saveGeometry();
-        dsoSettings->mainWindowState = saveState();
+        dsoSettings->mainWindowState = saveState( 2 );
         dsoSettings->save();
     } );
 
@@ -546,7 +590,7 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
         if ( !configFileName.endsWith( ".conf" ) )
             configFileName.append( ".conf" );
         dsoSettings->mainWindowGeometry = saveGeometry();
-        dsoSettings->mainWindowState = saveState();
+        dsoSettings->mainWindowState = saveState( 2 );
         dsoSettings->saveToFile( configFileName );
     } );
 
@@ -554,7 +598,7 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
 
     connect( ui->actionSettings, &QAction::triggered, this, [ this ]() {
         dsoSettings->mainWindowGeometry = saveGeometry();
-        dsoSettings->mainWindowState = saveState();
+        dsoSettings->mainWindowState = saveState( 2 );
 
         DsoConfigDialog *configDialog = new DsoConfigDialog( dsoSettings, this );
         configDialog->setModal( true );
@@ -676,7 +720,7 @@ void MainWindow::toggleDataRecording() {
             QMessageBox::critical( this, tr( "Запись измерений" ), error.isEmpty() ? tr( "Не удалось начать запись." ) : error );
             return;
         }
-        recordDataAction->setText( tr( "Остановить запись данных" ) );
+        recordDataAction->setText( tr( "Стоп данных" ) );
         recordDataAction->setToolTip( tr( "Остановить запись измерений CH1/CH2" ) );
         recordDataAction->setIcon( style()->standardIcon( QStyle::SP_MediaStop ) );
         return;
@@ -735,7 +779,7 @@ void MainWindow::toggleVideoRecording() {
         }
         videoStartedAtMs = QDateTime::currentMSecsSinceEpoch();
         videoFrameTimer->start( qMax( 1, 1000 / videoFps ) );
-        recordVideoAction->setText( tr( "Остановить видео" ) );
+        recordVideoAction->setText( tr( "Стоп видео" ) );
         statusBar()->showMessage( tr( "Запись MP4 начата: %1" ).arg( path ) );
         return;
     }
@@ -755,7 +799,7 @@ void MainWindow::toggleVideoRecording() {
         }
     }
     recordVideoAction->setChecked( false );
-    recordVideoAction->setText( tr( "Запись видео MP4" ) );
+    recordVideoAction->setText( tr( "Видео" ) );
     recordVideoAction->setIcon( videoRecordIcon );
 }
 
@@ -772,7 +816,7 @@ void MainWindow::appendVideoFrame() {
         videoFrameTimer->stop();
         videoRecorder->stop();
         recordVideoAction->setChecked( false );
-        recordVideoAction->setText( tr( "Запись видео MP4" ) );
+        recordVideoAction->setText( tr( "Видео" ) );
         QMessageBox::critical( this, tr( "Запись MP4" ), error );
     } else {
         const qint64 seconds = ( QDateTime::currentMSecsSinceEpoch() - videoStartedAtMs ) / 1000;
@@ -872,7 +916,7 @@ void MainWindow::deviceConnectionStateChanged( DeviceConnectionState state, cons
         QSignalBlocker manualCommandBlocker( ui->actionManualCommand );
         ui->actionSampling->setChecked( false );
         ui->actionSampling->setIcon( iconPlay );
-        ui->actionSampling->setText( tr( "Start" ) );
+        ui->actionSampling->setText( tr( "Пуск" ) );
         ui->actionSampling->setStatusTip( tr( "Oscilloscope unavailable" ) );
         ui->actionCalibrateOffset->setChecked( false );
         ui->actionManualCommand->setChecked( false );
@@ -1091,7 +1135,7 @@ void MainWindow::closeEvent( QCloseEvent *event ) {
     }
     if ( dsoSettings->alwaysSave ) {
         dsoSettings->mainWindowGeometry = saveGeometry();
-        dsoSettings->mainWindowState = saveState();
+        dsoSettings->mainWindowState = saveState( 2 );
         dsoSettings->save();
     }
     QMainWindow::closeEvent( event );
