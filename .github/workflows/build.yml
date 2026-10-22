@@ -381,7 +381,7 @@ jobs:
       run: |
         cmake --build build --parallel 8 --config Release --target ExperimentStorageSmoke
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-        ctest --test-dir build -C Release --output-on-failure -R experiment-storage-regression
+        ctest --test-dir build -C Release --verbose --output-on-failure -R experiment-storage-regression
 
     - name: Windows MSVC Build
       # GitHub hosts Windows runners on Standard_DS2_v2 virtual machines in Microsoft Azure:

@@ -25,6 +25,7 @@
 #include <QSqlQuery>
 #include <QTemporaryDir>
 #include <QTimer>
+#include <cstdio>
 #ifdef OPENHANTEK_TEST_MP4
 #include <QPainter>
 #include <QPen>
@@ -43,8 +44,12 @@ using Microsoft::WRL::ComPtr;
 
 namespace {
 bool check( bool condition, const QString &message ) {
-    if ( !condition )
+    if ( !condition ) {
         qCritical().noquote() << "FAIL:" << message;
+        const QByteArray diagnostic = QStringLiteral( "FAIL: %1\n" ).arg( message ).toLocal8Bit();
+        std::fwrite( diagnostic.constData(), 1, size_t( diagnostic.size() ), stderr );
+        std::fflush( stderr );
+    }
     return condition;
 }
 
