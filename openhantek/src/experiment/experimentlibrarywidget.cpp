@@ -33,6 +33,7 @@
 #include <QLabel>
 #include <QSignalBlocker>
 #include <QSet>
+#include <QSettings>
 #include <QPixmap>
 #include <QRegularExpression>
 #include <QStackedWidget>
@@ -154,8 +155,10 @@ ExperimentLibraryWidget::ExperimentLibraryWidget( ExperimentCatalog *catalog, Ex
     auto *heading = new QLabel( QStringLiteral( "Библиотека исследований" ), this );
     QFont headingFont = heading->font();
     headingFont.setBold( true );
-    headingFont.setPointSize( headingFont.pointSize() + 3 );
+    headingFont.setPointSize( headingFont.pointSize() + 1 );
     heading->setFont( headingFont );
+    heading->setMinimumWidth( 175 );
+    heading->setMaximumWidth( 195 );
     searchEdit = new QLineEdit( this );
     searchEdit->setPlaceholderText( QStringLiteral( "Поиск по экспериментам и файлам…" ) );
     searchEdit->setClearButtonEnabled( true );
@@ -163,17 +166,33 @@ ExperimentLibraryWidget::ExperimentLibraryWidget( ExperimentCatalog *catalog, Ex
     sortCombo->addItem( QStringLiteral( "Сначала новые" ), QStringLiteral( "recent" ) );
     sortCombo->addItem( QStringLiteral( "Сначала старые" ), QStringLiteral( "oldest" ) );
     sortCombo->setToolTip( QStringLiteral( "Порядок отображения материалов" ) );
+    sortCombo->setFixedWidth( 132 );
     auto *viewMode = new QComboBox( this );
     viewMode->addItem( QStringLiteral( "Таблица" ) );
     viewMode->addItem( QStringLiteral( "Плитки" ) );
     viewMode->setToolTip( QStringLiteral( "Режим отображения материалов" ) );
+    viewMode->setFixedWidth( 92 );
     experimentFilter = new QComboBox( this );
     experimentFilter->addItem( QStringLiteral( "Все эксперименты" ), QString() );
     experimentFilter->setToolTip( QStringLiteral( "Фильтр по эксперименту" ) );
+    experimentFilter->setFixedWidth( 142 );
     auto *newExperimentButton = new QPushButton( QStringLiteral( "Новый эксперимент" ), this );
+    newExperimentButton->setFixedWidth( 132 );
     auto *rescanButton = new QPushButton( QStringLiteral( "Пересканировать" ), this );
+    rescanButton->setIcon( style()->standardIcon( QStyle::SP_BrowserReload ) );
+    rescanButton->setText( QString() );
+    rescanButton->setFixedWidth( 32 );
+    rescanButton->setToolTip( QStringLiteral( "Обновить список материалов" ) );
     auto *trashButton = new QPushButton( QStringLiteral( "Корзина" ), this );
+    trashButton->setIcon( style()->standardIcon( QStyle::SP_TrashIcon ) );
+    trashButton->setText( QString() );
+    trashButton->setFixedWidth( 32 );
+    trashButton->setToolTip( QStringLiteral( "Восстановить материал из корзины" ) );
     auto *emptyTrashButton = new QPushButton( QStringLiteral( "Очистить корзину" ), this );
+    emptyTrashButton->setIcon( style()->standardIcon( QStyle::SP_DialogDiscardButton ) );
+    emptyTrashButton->setText( QString() );
+    emptyTrashButton->setFixedWidth( 32 );
+    emptyTrashButton->setToolTip( QStringLiteral( "Очистить корзину" ) );
     toolbar->addWidget( heading );
     toolbar->addSpacing( 10 );
     toolbar->addWidget( searchEdit, 1 );
@@ -289,6 +308,14 @@ ExperimentLibraryWidget::ExperimentLibraryWidget( ExperimentCatalog *catalog, Ex
     splitter->addWidget( details );
     splitter->setStretchFactor( 1, 1 );
     splitter->setSizes( { 190, 760, 250 } );
+    QSettings libraryLayoutSettings;
+    const QByteArray savedSplitterState = libraryLayoutSettings.value( QStringLiteral( "laboratory/library/splitter" ) ).toByteArray();
+    if ( !savedSplitterState.isEmpty() )
+        splitter->restoreState( savedSplitterState );
+    connect( splitter, &QSplitter::splitterMoved, this, [ splitter ] {
+        QSettings settings;
+        settings.setValue( QStringLiteral( "laboratory/library/splitter" ), splitter->saveState() );
+    } );
     root->addWidget( splitter, 1 );
 
     indexStatus = new QLabel( this );
