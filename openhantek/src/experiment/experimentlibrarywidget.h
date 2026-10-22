@@ -21,6 +21,7 @@ class QStackedWidget;
 class QTimer;
 class QTableWidget;
 class QTreeWidget;
+class QResizeEvent;
 class QPoint;
 
 class ExperimentLibraryWidget : public QWidget {
@@ -46,12 +47,15 @@ class ExperimentLibraryWidget : public QWidget {
     void showContextMenu( const QPoint &position );
 
   private:
+    void resizeEvent( QResizeEvent *event ) override;
+
     ExperimentCatalog *catalog;
     ExperimentManager *manager;
     QTreeWidget *navigation = nullptr;
     QLineEdit *searchEdit = nullptr;
     QComboBox *sortCombo = nullptr;
     QComboBox *experimentFilter = nullptr;
+    QComboBox *viewModeCombo = nullptr;
     QTableWidget *table = nullptr;
     QListWidget *tiles = nullptr;
     QStackedWidget *libraryViews = nullptr;

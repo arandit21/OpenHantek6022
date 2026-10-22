@@ -42,21 +42,28 @@
 #include <QLabel>
 #include <QLoggingCategory>
 #include <QMessageBox>
+#include <QMenu>
 #include <QPainter>
 #include <QPalette>
 #include <QPrintDialog>
 #include <QPrinter>
 #include <QPushButton>
+#include <QResizeEvent>
 #include <QSaveFile>
 #include <QSettings>
 #include <QSignalBlocker>
 #include <QSlider>
+#include <QSizePolicy>
 #include <QStyle>
 #include <QDialog>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QTimer>
+#include <QToolBar>
+#include <QToolButton>
 #include <QValidator>
+
+#include <algorithm>
 
 #include "OH_VERSION.h"
 
@@ -79,6 +86,27 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
     elapsedTime.start();
 
     ui->setupUi( this );
+    ui->menuFile->setTitle( tr( "Файл" ) );
+    ui->menuExport->setTitle( tr( "Экспорт" ) );
+    ui->menuView->setTitle( tr( "Вид" ) );
+    ui->menuOscilloscope->setTitle( tr( "Осциллограф" ) );
+    ui->menuHelp->setTitle( tr( "Помощь" ) );
+    ui->actionOpen->setText( tr( "Открыть настройки…" ) );
+    ui->actionSave->setText( tr( "Сохранить настройки" ) );
+    ui->actionSave_as->setText( tr( "Сохранить настройки как…" ) );
+    ui->actionExit->setText( tr( "Выход" ) );
+    ui->actionRefresh->setText( tr( "Перезапуск захвата" ) );
+    ui->actionPhosphor->setText( tr( "Люминофор" ) );
+    ui->actionHistogram->setText( tr( "Гистограмма" ) );
+    ui->actionZoom->setText( tr( "Увеличение" ) );
+    ui->actionMeasure->setText( tr( "Измерения" ) );
+    ui->actionCalibrateOffset->setText( tr( "Калибровка смещения" ) );
+    ui->actionManualCommand->setText( tr( "Ручная команда" ) );
+    ui->actionUserManual->setText( tr( "Руководство пользователя" ) );
+    ui->actionACmodification->setText( tr( "Модификация AC-входа" ) );
+    ui->actionFrequencyGeneratorModification->setText( tr( "Модификация генератора частоты" ) );
+    ui->actionAbout->setText( tr( "О программе…" ) );
+    ui->actionAboutQt->setText( tr( "О Qt…" ) );
     // Keep the upstream oscilloscope widget intact inside the approved light
     // laboratory shell and its compact vertical tool rail.
     ui->toolBar->setOrientation( Qt::Vertical );
@@ -102,7 +130,21 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
         "QCheckBox::indicator:checked:hover { background: #1d4ed8; }"
         "QCheckBox::indicator:disabled { border-color: #cbd5e1; background: #e2e8f0; }"
         "QCheckBox::indicator:checked:disabled { border-color: #94a3b8; background: #94a3b8; image: url(:/images/lighttheme/check.svg); }"
-        "QCheckBox:focus { outline: 2px solid #60a5fa; outline-offset: 2px; }" ) );
+        "QCheckBox:focus { outline: 2px solid #60a5fa; outline-offset: 2px; }"
+        "QDockWidget { color: #243247; }"
+        "QDockWidget::title { background: #eef2f6; border: 1px solid #d6dee8; border-radius: 5px; padding: 6px 8px; font-weight: 600; }"
+        "QComboBox, QLineEdit { background: #ffffff; color: #243247; border: 1px solid #cbd5e1; border-radius: 5px; padding: 5px 7px; min-height: 22px; }"
+        "QComboBox:hover, QLineEdit:hover { border-color: #8da9c8; }"
+        "QComboBox:focus, QLineEdit:focus { border-color: #1677e8; }"
+        "QComboBox QAbstractItemView { background: #ffffff; color: #243247; selection-background-color: #1677e8; selection-color: #ffffff; }"
+        "QPushButton { background: #ffffff; color: #243247; border: 1px solid #cbd5e1; border-radius: 5px; padding: 5px 8px; }"
+        "QPushButton:hover { background: #f4f8fd; border-color: #8da9c8; }"
+        "QTableWidget, QTreeWidget, QListWidget { background: #ffffff; color: #243247; alternate-background-color: #f5f8fc; border: 1px solid #d6dee8; selection-background-color: #1677e8; selection-color: #ffffff; }"
+        "QHeaderView::section { background: #eef2f6; color: #334155; border: 0; border-bottom: 1px solid #d6dee8; padding: 5px 6px; font-weight: 600; }"
+        "QMenuBar { background: #f8fafc; color: #243247; }"
+        "QMenuBar::item:selected { background: #e5effb; }"
+        "QMenu { background: #ffffff; color: #243247; border: 1px solid #d6dee8; }"
+        "QMenu::item:selected { background: #1677e8; color: #ffffff; }" ) );
     // This workspace design is intentionally light; trace colors and the
     // oscilloscope's own plot rendering remain controlled by DsoWidget.
     QPalette workspacePalette = palette();
@@ -203,12 +245,12 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
     setDockOptions( dockOptions() | QMainWindow::GroupedDragging );
 #endif
     QAction *action;
-    action = new QAction( QIcon( iconPath + "camera.svg" ), tr( "&Screenshot" ), this );
+    action = new QAction( QIcon( iconPath + "camera.svg" ), tr( "Снимок экрана" ), this );
     action->setToolTip( tr( "Make an immediate screenshot of the program window and save it into the current directory" ) );
     connect( action, &QAction::triggered, this, [ this ]() { screenShot( SCREENSHOT, true ); } );
     ui->menuExport->addAction( action );
 
-    action = new QAction( QIcon( iconPath + "clone.svg" ), tr( "&Hardcopy" ), this );
+    action = new QAction( QIcon( iconPath + "clone.svg" ), tr( "Печатная копия" ), this );
     action->setToolTip( tr( "Make an immediate (printable) hardcopy of the display and save it into the current directory" ) );
     connect( action, &QAction::triggered, this, [ this ]() {
         dsoWidget->switchToPrintColors();
@@ -218,12 +260,12 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
 
     ui->menuExport->addSeparator();
 
-    action = new QAction( QIcon( iconPath + "save_as.svg" ), tr( "Save Screenshot As .." ), this );
+    action = new QAction( QIcon( iconPath + "save_as.svg" ), tr( "Сохранить снимок как…" ), this );
     action->setToolTip( tr( "Make a screenshot of the program window and define the storage location" ) );
     connect( action, &QAction::triggered, this, [ this ]() { screenShot( SCREENSHOT ); } );
     ui->menuExport->addAction( action );
 
-    action = new QAction( QIcon( iconPath + "save_as.svg" ), tr( "Save Hardcopy As .." ), this );
+    action = new QAction( QIcon( iconPath + "save_as.svg" ), tr( "Сохранить печатную копию как…" ), this );
     action->setToolTip( tr( "Make a (printable) hardcopy of the display and define the storage location" ) );
     connect( action, &QAction::triggered, this, [ this ]() {
         dsoWidget->switchToPrintColors();
@@ -231,7 +273,7 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
     } );
     ui->menuExport->addAction( action );
 
-    action = new QAction( QIcon( iconPath + "print.svg" ), tr( "&Print Screen .." ), this );
+    action = new QAction( QIcon( iconPath + "print.svg" ), tr( "Печать экрана…" ), this );
     action->setToolTip( tr( "Send the hardcopy to a printer" ) );
     connect( action, &QAction::triggered, this, [ this ]() {
         dsoWidget->switchToPrintColors();
@@ -277,6 +319,30 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
     addDockWidget( Qt::RightDockWidgetArea, horizontalDock );
     addDockWidget( Qt::RightDockWidgetArea, triggerDock );
     addDockWidget( Qt::RightDockWidgetArea, spectrumDock );
+    parameterDocks = { voltageDock, horizontalDock, triggerDock, spectrumDock };
+    for ( QDockWidget *dock : parameterDocks ) {
+        dock->setMinimumWidth( 280 );
+        dock->setMaximumWidth( 380 );
+    }
+    // The four existing device docks remain independent, functional Qt docks.
+    // The first title bar provides one consistent hide control for the group.
+    auto *parametersTitleBar = new QWidget( voltageDock );
+    auto *parametersTitleLayout = new QHBoxLayout( parametersTitleBar );
+    parametersTitleLayout->setContentsMargins( 10, 2, 4, 2 );
+    auto *parametersTitle = new QLabel( tr( "Параметры" ), parametersTitleBar );
+    QFont parametersTitleFont = parametersTitle->font();
+    parametersTitleFont.setBold( true );
+    parametersTitle->setFont( parametersTitleFont );
+    parametersTitleLayout->addWidget( parametersTitle, 1 );
+    auto *closeParametersButton = new QPushButton( QStringLiteral( "→" ), parametersTitleBar );
+    closeParametersButton->setFixedSize( 28, 26 );
+    closeParametersButton->setToolTip( tr( "Скрыть параметры" ) );
+    parametersTitleLayout->addWidget( closeParametersButton );
+    voltageDock->setTitleBarWidget( parametersTitleBar );
+    connect( closeParametersButton, &QPushButton::clicked, this, [ this ] {
+        for ( QDockWidget *dock : parameterDocks )
+            dock->hide();
+    } );
     QAction *analysisAction = spectrumDock->toggleViewAction();
     analysisAction->setText( QStringLiteral( "Анализ" ) );
     analysisAction->setIcon( QIcon( iconPath + "analysis.svg" ) );
@@ -287,6 +353,7 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
 
     // Central oszilloscope widget
     dsoWidget = new DsoWidget( &dsoSettings->scope, &dsoSettings->view, spec, this );
+    dsoWidget->setFocusPolicy( Qt::StrongFocus );
     setCentralWidget( dsoWidget );
 
     // The research library is a dockable workspace, while the original scope stays
@@ -294,8 +361,8 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
     libraryWidget = new ExperimentLibraryWidget( experimentCatalog, experimentManager, this );
     libraryDock = new QDockWidget( tr( "Библиотека исследований" ), this );
     libraryDock->setObjectName( QStringLiteral( "researchLibraryDock" ) );
-    libraryDock->setMinimumWidth( 280 );
-    libraryDock->setMaximumWidth( 520 );
+    libraryDock->setMinimumWidth( 300 );
+    libraryDock->setMaximumWidth( 420 );
     libraryDock->setFeatures( QDockWidget::DockWidgetClosable | QDockWidget::DockWidgetMovable );
     libraryDock->setWidget( libraryWidget );
     addDockWidget( Qt::LeftDockWidgetArea, libraryDock );
@@ -320,13 +387,35 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
     ui->toolBar->addSeparator();
     ui->toolBar->addAction( ui->actionSettings );
     ui->toolBar->addSeparator();
+    auto *parametersAction = new QAction( QIcon( iconPath + "settings.svg" ), tr( "Параметры" ), this );
+    parametersAction->setCheckable( true );
+    parametersAction->setChecked( true );
+    parametersAction->setToolTip( tr( "Показать или скрыть настройки каналов, развёртки, синхронизации и спектра" ) );
+    ui->toolBar->addAction( parametersAction );
     ui->toolBar->addAction( libraryAction );
     connect( libraryAction, &QAction::toggled, this, [ this ]( bool visible ) {
         libraryDock->setVisible( visible );
-        if ( visible && libraryDock->width() < 280 )
-            resizeDocks( { libraryDock }, { 320 }, Qt::Horizontal );
+        if ( visible && libraryDock->width() < 300 )
+            resizeDocks( { libraryDock }, { 360 }, Qt::Horizontal );
+        updatePanelHandles();
     } );
     connect( libraryDock, &QDockWidget::visibilityChanged, libraryAction, &QAction::setChecked );
+    connect( libraryDock, &QDockWidget::visibilityChanged, this, &MainWindow::updatePanelHandles );
+    connect( parametersAction, &QAction::toggled, this, [ this ]( bool visible ) {
+        for ( QDockWidget *dock : parameterDocks )
+            dock->setVisible( visible );
+        if ( visible )
+            resizeDocks( parameterDocks, QList< int >( parameterDocks.size(), 310 ), Qt::Horizontal );
+        updatePanelHandles();
+    } );
+    for ( QDockWidget *dock : parameterDocks )
+        connect( dock, &QDockWidget::visibilityChanged, this, [ this, parametersAction ] {
+            const bool anyVisible = std::any_of( parameterDocks.cbegin(), parameterDocks.cend(),
+                                                 []( QDockWidget *item ) { return !item->isHidden(); } );
+            const QSignalBlocker blocker( parametersAction );
+            parametersAction->setChecked( anyVisible );
+            updatePanelHandles();
+        } );
     connect( libraryWidget, &ExperimentLibraryWidget::openRecordingRequested, this, &MainWindow::openRecording );
     connect( libraryWidget, &ExperimentLibraryWidget::activeExperimentChanged, this, [ this ]( const QString &path ) {
         statusBar()->showMessage( tr( "Активный эксперимент: %1" ).arg( QFileInfo( path ).fileName() ), 5000 );
@@ -357,6 +446,102 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
     ui->toolBar->addAction( screenshotAction );
     ui->toolBar->addAction( recordVideoAction );
     ui->toolBar->addAction( recordDataAction );
+
+    // The horizontal toolbar restores the approved analyzer row. Every item
+    // below is wired to an existing scope control; no placeholder screens are
+    // introduced for analyzer modes that the application does not implement.
+    auto *workspaceToolbar = new QToolBar( tr( "Рабочая область" ), this );
+    workspaceToolbar->setObjectName( QStringLiteral( "workspaceViewToolbar" ) );
+    workspaceToolbar->setMovable( false );
+    workspaceToolbar->setFloatable( false );
+    workspaceToolbar->setToolButtonStyle( Qt::ToolButtonTextBesideIcon );
+    workspaceToolbar->setIconSize( QSize( 20, 20 ) );
+    workspaceToolbar->setStyleSheet( QStringLiteral(
+        "QToolBar#workspaceViewToolbar { background: #eef2f6; border: 0; border-bottom: 1px solid #d6dee8; spacing: 6px; padding: 6px 10px; }"
+        "QToolBar#workspaceViewToolbar QToolButton { background: #ffffff; color: #243247; border: 1px solid #d6dee8; border-radius: 6px; padding: 7px 12px; min-height: 25px; }"
+        "QToolBar#workspaceViewToolbar QToolButton:hover { background: #f7faff; border-color: #9eb9d8; }"
+        "QToolBar#workspaceViewToolbar QToolButton:checked { background: #1677e8; color: #ffffff; border-color: #1677e8; }"
+        "QToolBar#workspaceViewToolbar QToolButton:checked:hover { background: #0868d6; }"
+        "QToolBar#workspaceViewToolbar QToolBar::separator { width: 1px; background: #d6dee8; margin: 4px; }" ) );
+
+    auto stateIcon = []( const QString &normalPath, const QString &activePath ) {
+        QIcon icon;
+        icon.addFile( normalPath, QSize(), QIcon::Normal, QIcon::Off );
+        icon.addFile( activePath, QSize(), QIcon::Normal, QIcon::On );
+        return icon;
+    };
+    auto *scopeViewAction = new QAction( stateIcon( iconPath + "scope.svg", iconPath + "scope-active.svg" ),
+                                         tr( "Осциллограф" ), this );
+    scopeViewAction->setCheckable( true );
+    scopeViewAction->setChecked( true );
+    scopeViewAction->setToolTip( tr( "Перейти к текущему экрану осциллографа" ) );
+    connect( scopeViewAction, &QAction::triggered, this, [ this, scopeViewAction ] {
+        scopeViewAction->setChecked( true );
+        dsoWidget->show();
+        dsoWidget->setFocus( Qt::OtherFocusReason );
+    } );
+    auto *spectrumViewAction = new QAction( stateIcon( iconPath + "spectrum.svg", iconPath + "spectrum-active.svg" ),
+                                            tr( "Спектр" ), this );
+    spectrumViewAction->setCheckable( true );
+    spectrumViewAction->setChecked( std::any_of( scope->spectrum.cbegin(), scope->spectrum.cend(),
+                                                 []( const DsoSettingsScopeChannel &channel ) { return channel.used; } ) );
+    spectrumViewAction->setToolTip( tr( "Показать или скрыть все спектральные трассы FFT" ) );
+    connect( spectrumViewAction, &QAction::toggled, this, [ spectrumDock, scope ]( bool enabled ) {
+        for ( ChannelID channel = 0; channel < scope->spectrum.size(); ++channel )
+            spectrumDock->setUsed( channel, enabled );
+    } );
+    connect( spectrumDock, &SpectrumDock::usedChannelChanged, this, [ spectrumViewAction, scope ] {
+        const bool anySpectrumVisible = std::any_of( scope->spectrum.cbegin(), scope->spectrum.cend(),
+                                                      []( const DsoSettingsScopeChannel &channel ) { return channel.used; } );
+        const QSignalBlocker blocker( spectrumViewAction );
+        spectrumViewAction->setChecked( anySpectrumVisible );
+    } );
+    ui->actionHistogram->setText( tr( "Гистограмма" ) );
+    ui->actionHistogram->setIcon( stateIcon( iconPath + "histogram.svg", iconPath + "histogram-active.svg" ) );
+    ui->actionMeasure->setText( tr( "Измерения" ) );
+    ui->actionMeasure->setIcon( stateIcon( iconPath + "measure.svg", iconPath + "measure-active.svg" ) );
+
+    workspaceToolbar->addAction( scopeViewAction );
+    workspaceToolbar->addAction( spectrumViewAction );
+    workspaceToolbar->addAction( ui->actionHistogram );
+    workspaceToolbar->addAction( ui->actionMeasure );
+    auto *toolbarSpacer = new QWidget( workspaceToolbar );
+    toolbarSpacer->setSizePolicy( QSizePolicy::Expanding, QSizePolicy::Preferred );
+    workspaceToolbar->addWidget( toolbarSpacer );
+    workspaceToolbar->addAction( screenshotAction );
+    addToolBar( Qt::TopToolBarArea, workspaceToolbar );
+
+    auto *analysisMenu = ui->menubar->addMenu( tr( "Анализ" ) );
+    analysisMenu->addAction( spectrumViewAction );
+    analysisMenu->addAction( ui->actionHistogram );
+    analysisMenu->addAction( ui->actionMeasure );
+    analysisMenu->addAction( analysisAction );
+    auto *toolsMenu = ui->menubar->addMenu( tr( "Инструменты" ) );
+    toolsMenu->addAction( parametersAction );
+    toolsMenu->addAction( libraryAction );
+    toolsMenu->addAction( screenshotAction );
+    toolsMenu->addAction( recordVideoAction );
+    toolsMenu->addAction( recordDataAction );
+
+    libraryRevealButton = new QToolButton( this );
+    libraryRevealButton->setText( QStringLiteral( "→" ) );
+    libraryRevealButton->setFixedSize( 24, 44 );
+    libraryRevealButton->setAutoRaise( false );
+    libraryRevealButton->setToolTip( tr( "Открыть библиотеку исследований" ) );
+    libraryRevealButton->setStyleSheet( QStringLiteral(
+        "QToolButton { background: #ffffff; color: #243247; border: 1px solid #cbd5e1; border-radius: 0 6px 6px 0; font-size: 18px; }"
+        "QToolButton:hover { background: #eaf3ff; }" ) );
+    connect( libraryRevealButton, &QToolButton::clicked, libraryAction, &QAction::trigger );
+
+    parameterRevealButton = new QToolButton( this );
+    parameterRevealButton->setText( QStringLiteral( "←" ) );
+    parameterRevealButton->setFixedSize( 24, 44 );
+    parameterRevealButton->setAutoRaise( false );
+    parameterRevealButton->setToolTip( tr( "Открыть панель параметров" ) );
+    parameterRevealButton->setStyleSheet( QStringLiteral(
+        "QToolButton { background: #ffffff; color: #243247; border: 1px solid #cbd5e1; border-radius: 6px 0 0 6px; font-size: 18px; }"
+        "QToolButton:hover { background: #eaf3ff; }" ) );
+    connect( parameterRevealButton, &QToolButton::clicked, parametersAction, &QAction::trigger );
     QByteArray savedWorkspaceState = QSettings().value( QStringLiteral( "laboratory/mainWindowState" ) ).toByteArray();
     if ( savedWorkspaceState.isEmpty() )
         savedWorkspaceState = dsoSettings->mainWindowState;
@@ -365,9 +550,16 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
         // The approved layout starts with a wide central scope and a closed
         // left library drawer. Dock proportions and visibility are persisted.
         libraryDock->hide();
-        QTimer::singleShot( 0, this, [ this ] { resizeDocks( { libraryDock }, { 320 }, Qt::Horizontal ); } );
+        QTimer::singleShot( 0, this, [ this ] {
+            resizeDocks( { libraryDock }, { 360 }, Qt::Horizontal );
+            resizeDocks( parameterDocks, QList< int >( parameterDocks.size(), 310 ), Qt::Horizontal );
+            updatePanelHandles();
+        } );
     }
     libraryAction->setChecked( !libraryDock->isHidden() );
+    parametersAction->setChecked( std::any_of( parameterDocks.cbegin(), parameterDocks.cend(),
+                                               []( QDockWidget *dock ) { return !dock->isHidden(); } ) );
+    updatePanelHandles();
     recordVideoAction->setEnabled( Mp4VideoRecorder::isSupported() );
     if ( !Mp4VideoRecorder::isSupported() )
         recordVideoAction->setText( tr( "Нет видео" ) );
@@ -1148,6 +1340,30 @@ bool MainWindow::openDocument( QString docName ) {
     if ( dsoSettings->scope.verboseLevel > 2 )
         qDebug() << "  " << url;
     return QDesktopServices::openUrl( url );
+}
+
+
+void MainWindow::resizeEvent( QResizeEvent *event ) {
+    QMainWindow::resizeEvent( event );
+    updatePanelHandles();
+}
+
+
+void MainWindow::updatePanelHandles() {
+    if ( !libraryRevealButton || !parameterRevealButton || !libraryDock )
+        return;
+
+    libraryRevealButton->setVisible( libraryDock->isHidden() );
+    const int railRight = ui->toolBar ? ui->toolBar->geometry().right() : 0;
+    libraryRevealButton->move( railRight + 1, qMax( 0, height() / 2 - libraryRevealButton->height() / 2 ) );
+    libraryRevealButton->raise();
+
+    const bool anyParameterDockVisible = std::any_of( parameterDocks.cbegin(), parameterDocks.cend(),
+                                                       []( QDockWidget *dock ) { return !dock->isHidden(); } );
+    parameterRevealButton->setVisible( !anyParameterDockVisible );
+    parameterRevealButton->move( qMax( 0, width() - parameterRevealButton->width() - 1 ),
+                                 qMax( 0, height() / 2 - parameterRevealButton->height() / 2 ) );
+    parameterRevealButton->raise();
 }
 
 

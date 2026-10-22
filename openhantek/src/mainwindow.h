@@ -24,7 +24,9 @@ class RawPlaybackEngine;
 class ExperimentLibraryWidget;
 class Mp4VideoRecorder;
 class QDockWidget;
+class QResizeEvent;
 class QTimer;
+class QToolButton;
 class DsoWidget;
 class HorizontalDock;
 class TriggerDock;
@@ -57,6 +59,7 @@ class MainWindow : public QMainWindow {
 
   protected:
     void closeEvent( QCloseEvent *event ) override;
+    void resizeEvent( QResizeEvent *event ) override;
 
   private:
     Ui::MainWindow *ui;
@@ -79,6 +82,9 @@ class MainWindow : public QMainWindow {
     std::unique_ptr< Mp4VideoRecorder > videoRecorder;
     ExperimentLibraryWidget *libraryWidget = nullptr;
     QDockWidget *libraryDock = nullptr;
+    QList< QDockWidget * > parameterDocks;
+    QToolButton *libraryRevealButton = nullptr;
+    QToolButton *parameterRevealButton = nullptr;
     QTimer *videoFrameTimer = nullptr;
     QAction *recordDataAction = nullptr;
     QAction *recordVideoAction = nullptr;
@@ -98,6 +104,7 @@ class MainWindow : public QMainWindow {
     void toggleVideoRecording();
     void appendVideoFrame();
     void openRecording( const QString &path );
+    void updatePanelHandles();
 
     bool openDocument( QString docName );
     void setDeviceCommandUiEnabled( bool enabled );

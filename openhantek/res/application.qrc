@@ -11,6 +11,12 @@
         <file>images/lighttheme/zoom.svg</file>
         <file>images/lighttheme/check.svg</file>
         <file>images/lighttheme/analysis.svg</file>
+        <file>images/lighttheme/scope.svg</file>
+        <file>images/lighttheme/scope-active.svg</file>
+        <file>images/lighttheme/spectrum.svg</file>
+        <file>images/lighttheme/spectrum-active.svg</file>
+        <file>images/lighttheme/histogram-active.svg</file>
+        <file>images/lighttheme/measure-active.svg</file>
 
         <file>images/darktheme/histogram.svg</file>
         <file>images/darktheme/measure.svg</file>

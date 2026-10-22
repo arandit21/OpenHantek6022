@@ -54,6 +54,7 @@
 #include <QFileDialog>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QResizeEvent>
 #include <QSplitter>
 #include <QTableWidget>
 #include <QTableWidgetItem>
@@ -148,36 +149,45 @@ ExperimentLibraryWidget::ExperimentLibraryWidget( ExperimentCatalog *catalog, Ex
     : QWidget( parent ), catalog( catalog ), manager( manager ) {
     setObjectName( "researchLibrary" );
     auto *root = new QVBoxLayout( this );
-    root->setContentsMargins( 12, 10, 12, 10 );
-    root->setSpacing( 8 );
+    root->setContentsMargins( 8, 8, 8, 8 );
+    root->setSpacing( 6 );
 
-    auto *toolbar = new QHBoxLayout;
-    auto *heading = new QLabel( QStringLiteral( "Библиотека исследований" ), this );
-    QFont headingFont = heading->font();
-    headingFont.setBold( true );
-    headingFont.setPointSize( headingFont.pointSize() + 1 );
-    heading->setFont( headingFont );
-    heading->setMinimumWidth( 175 );
-    heading->setMaximumWidth( 195 );
+    // This widget lives in a 340–380 px side drawer. Keep controls in short
+    // rows and put categories, records and preview vertically; the old
+    // three-column splitter had a >500 px minimum width and clipped content.
+    auto *searchRow = new QHBoxLayout;
     searchEdit = new QLineEdit( this );
     searchEdit->setPlaceholderText( QStringLiteral( "Поиск по экспериментам и файлам…" ) );
     searchEdit->setClearButtonEnabled( true );
+    searchRow->addWidget( searchEdit, 1 );
+    auto *storageButton = new QPushButton( this );
+    storageButton->setIcon( style()->standardIcon( QStyle::SP_DirOpenIcon ) );
+    storageButton->setFixedSize( 32, 30 );
+    storageButton->setToolTip( QStringLiteral( "Выбрать и проверить папку хранения экспериментов" ) );
+    searchRow->addWidget( storageButton );
+    root->addLayout( searchRow );
+
+    auto *filterRow = new QHBoxLayout;
     sortCombo = new QComboBox( this );
     sortCombo->addItem( QStringLiteral( "Сначала новые" ), QStringLiteral( "recent" ) );
     sortCombo->addItem( QStringLiteral( "Сначала старые" ), QStringLiteral( "oldest" ) );
     sortCombo->setToolTip( QStringLiteral( "Порядок отображения материалов" ) );
-    sortCombo->setFixedWidth( 132 );
-    auto *viewMode = new QComboBox( this );
-    viewMode->addItem( QStringLiteral( "Таблица" ) );
-    viewMode->addItem( QStringLiteral( "Плитки" ) );
-    viewMode->setToolTip( QStringLiteral( "Режим отображения материалов" ) );
-    viewMode->setFixedWidth( 92 );
+    viewModeCombo = new QComboBox( this );
+    viewModeCombo->addItem( QStringLiteral( "Таблица" ) );
+    viewModeCombo->addItem( QStringLiteral( "Плитки" ) );
+    viewModeCombo->setToolTip( QStringLiteral( "Режим отображения материалов" ) );
+    filterRow->addWidget( sortCombo, 1 );
+    filterRow->addWidget( viewModeCombo, 1 );
+    root->addLayout( filterRow );
+
     experimentFilter = new QComboBox( this );
     experimentFilter->addItem( QStringLiteral( "Все эксперименты" ), QString() );
     experimentFilter->setToolTip( QStringLiteral( "Фильтр по эксперименту" ) );
-    experimentFilter->setFixedWidth( 142 );
+    root->addWidget( experimentFilter );
+
+    auto *actionRow = new QHBoxLayout;
     auto *newExperimentButton = new QPushButton( QStringLiteral( "Новый эксперимент" ), this );
-    newExperimentButton->setFixedWidth( 132 );
+    actionRow->addWidget( newExperimentButton, 1 );
     auto *rescanButton = new QPushButton( QStringLiteral( "Пересканировать" ), this );
     rescanButton->setIcon( style()->standardIcon( QStyle::SP_BrowserReload ) );
     rescanButton->setText( QString() );
@@ -193,27 +203,17 @@ ExperimentLibraryWidget::ExperimentLibraryWidget( ExperimentCatalog *catalog, Ex
     emptyTrashButton->setText( QString() );
     emptyTrashButton->setFixedWidth( 32 );
     emptyTrashButton->setToolTip( QStringLiteral( "Очистить корзину" ) );
-    auto *storageButton = new QPushButton( this );
-    storageButton->setIcon( style()->standardIcon( QStyle::SP_DirOpenIcon ) );
-    storageButton->setFixedSize( 32, 30 );
-    storageButton->setToolTip( QStringLiteral( "Выбрать и проверить папку хранения экспериментов" ) );
-    toolbar->addWidget( heading );
-    toolbar->addSpacing( 10 );
-    toolbar->addWidget( searchEdit, 1 );
-    toolbar->addWidget( sortCombo );
-    toolbar->addWidget( viewMode );
-    toolbar->addWidget( experimentFilter );
-    toolbar->addWidget( newExperimentButton );
-    toolbar->addWidget( rescanButton );
-    toolbar->addWidget( trashButton );
-    toolbar->addWidget( emptyTrashButton );
-    toolbar->addWidget( storageButton );
-    root->addLayout( toolbar );
+    actionRow->addWidget( rescanButton );
+    actionRow->addWidget( trashButton );
+    actionRow->addWidget( emptyTrashButton );
+    root->addLayout( actionRow );
 
-    auto *splitter = new QSplitter( Qt::Horizontal, this );
-    navigation = new QTreeWidget( splitter );
+    navigation = new QTreeWidget( this );
+    navigation->setObjectName( QStringLiteral( "libraryCategories" ) );
     navigation->setHeaderHidden( true );
-    navigation->setMinimumWidth( 180 );
+    navigation->setMinimumHeight( 88 );
+    navigation->setMaximumHeight( 154 );
+    navigation->setSizePolicy( QSizePolicy::Expanding, QSizePolicy::Preferred );
     auto addCategory = [ this ]( const QString &label, const QString &category ) {
         auto *item = new QTreeWidgetItem( navigation, { label } );
         item->setData( 0, Qt::UserRole, category );
@@ -229,7 +229,11 @@ ExperimentLibraryWidget::ExperimentLibraryWidget( ExperimentCatalog *catalog, Ex
     addCategory( QStringLiteral( "Результаты анализа" ), QStringLiteral( "analysis" ) );
     navigation->setCurrentItem( navigation->topLevelItem( 0 ) );
 
-    libraryViews = new QStackedWidget( splitter );
+    auto *contentSplitter = new QSplitter( Qt::Vertical, this );
+    contentSplitter->setObjectName( QStringLiteral( "libraryContentSplitter" ) );
+    contentSplitter->setChildrenCollapsible( false );
+    libraryViews = new QStackedWidget( contentSplitter );
+    libraryViews->setMinimumHeight( 180 );
     table = new QTableWidget( libraryViews );
     table->setColumnCount( 5 );
     table->setHorizontalHeaderLabels( { QStringLiteral( "Название" ), QStringLiteral( "Тип" ),
@@ -271,9 +275,11 @@ ExperimentLibraryWidget::ExperimentLibraryWidget( ExperimentCatalog *catalog, Ex
     libraryViews->addWidget( table );
     libraryViews->addWidget( tiles );
 
-    auto *details = new QWidget( splitter );
-    details->setMinimumWidth( 220 );
+    auto *details = new QWidget( contentSplitter );
+    details->setMinimumHeight( 100 );
     auto *detailsLayout = new QVBoxLayout( details );
+    detailsLayout->setContentsMargins( 8, 6, 8, 6 );
+    detailsLayout->setSpacing( 4 );
     detailsTitle = new QLabel( QStringLiteral( "Выберите материал" ), details );
     detailsTitle->setWordWrap( true );
     QFont titleFont = detailsTitle->font();
@@ -282,15 +288,15 @@ ExperimentLibraryWidget::ExperimentLibraryWidget( ExperimentCatalog *catalog, Ex
     previewImage = new QLabel( details );
     previewImage->setObjectName( "libraryPreview" );
     previewImage->setAlignment( Qt::AlignCenter );
-    previewImage->setMinimumHeight( 90 );
-    previewImage->setMaximumHeight( 220 );
+    previewImage->setMinimumHeight( 64 );
+    previewImage->setMaximumHeight( 150 );
     previewImage->setStyleSheet( QStringLiteral( "background: palette(base); border: 1px solid palette(mid);" ) );
     previewImage->hide();
     dataPreview = new QTableWidget( details );
     dataPreview->setObjectName( "libraryDataPreview" );
     dataPreview->setEditTriggers( QAbstractItemView::NoEditTriggers );
     dataPreview->setSelectionMode( QAbstractItemView::NoSelection );
-    dataPreview->setMaximumHeight( 220 );
+    dataPreview->setMaximumHeight( 150 );
     dataPreview->horizontalHeader()->setSectionResizeMode( QHeaderView::Stretch );
     dataPreview->verticalHeader()->hide();
     dataPreview->hide();
@@ -308,20 +314,21 @@ ExperimentLibraryWidget::ExperimentLibraryWidget( ExperimentCatalog *catalog, Ex
     detailsLayout->addStretch( 1 );
     detailsLayout->addWidget( openButton );
     detailsLayout->addWidget( showFolderButton );
-    splitter->addWidget( navigation );
-    splitter->addWidget( libraryViews );
-    splitter->addWidget( details );
-    splitter->setStretchFactor( 1, 1 );
-    splitter->setSizes( { 190, 760, 250 } );
+    contentSplitter->addWidget( libraryViews );
+    contentSplitter->addWidget( details );
+    contentSplitter->setStretchFactor( 0, 3 );
+    contentSplitter->setStretchFactor( 1, 1 );
+    contentSplitter->setSizes( { 440, 190 } );
     QSettings libraryLayoutSettings;
-    const QByteArray savedSplitterState = libraryLayoutSettings.value( QStringLiteral( "laboratory/library/splitter" ) ).toByteArray();
+    const QByteArray savedSplitterState = libraryLayoutSettings.value( QStringLiteral( "laboratory/library/contentSplitterV2" ) ).toByteArray();
     if ( !savedSplitterState.isEmpty() )
-        splitter->restoreState( savedSplitterState );
-    connect( splitter, &QSplitter::splitterMoved, this, [ splitter ] {
+        contentSplitter->restoreState( savedSplitterState );
+    connect( contentSplitter, &QSplitter::splitterMoved, this, [ contentSplitter ] {
         QSettings settings;
-        settings.setValue( QStringLiteral( "laboratory/library/splitter" ), splitter->saveState() );
+        settings.setValue( QStringLiteral( "laboratory/library/contentSplitterV2" ), contentSplitter->saveState() );
     } );
-    root->addWidget( splitter, 1 );
+    root->addWidget( navigation );
+    root->addWidget( contentSplitter, 1 );
 
     indexStatus = new QLabel( this );
     indexStatus->setObjectName( "libraryStatus" );
@@ -337,8 +344,8 @@ ExperimentLibraryWidget::ExperimentLibraryWidget( ExperimentCatalog *catalog, Ex
     connect( navigation, &QTreeWidget::currentItemChanged, this, [ this ]() { refreshRecords(); } );
     connect( searchEdit, &QLineEdit::textChanged, this, [ this ]() { refreshRecords(); } );
     connect( sortCombo, &QComboBox::currentIndexChanged, this, [ this ]() { refreshRecords(); } );
-    connect( viewMode, &QComboBox::currentIndexChanged, libraryViews, &QStackedWidget::setCurrentIndex );
-    connect( viewMode, &QComboBox::currentIndexChanged, this, [ this ]() { refreshRecords(); } );
+    connect( viewModeCombo, &QComboBox::currentIndexChanged, libraryViews, &QStackedWidget::setCurrentIndex );
+    connect( viewModeCombo, &QComboBox::currentIndexChanged, this, [ this ]() { refreshRecords(); } );
     connect( experimentFilter, &QComboBox::currentIndexChanged, this, [ this ]() { refreshRecords(); } );
     connect( table, &QTableWidget::itemSelectionChanged, this, &ExperimentLibraryWidget::updateDetails );
     connect( tiles, &QListWidget::itemSelectionChanged, this, &ExperimentLibraryWidget::updateDetails );
@@ -415,6 +422,25 @@ ExperimentLibraryWidget::ExperimentLibraryWidget( ExperimentCatalog *catalog, Ex
     else
         setIndexStatus( catalog->errorString(), true );
     refreshRecords();
+}
+
+
+void ExperimentLibraryWidget::resizeEvent( QResizeEvent *event ) {
+    QWidget::resizeEvent( event );
+    if ( !table )
+        return;
+
+    // Keep the compact drawer useful without forcing horizontal scrolling for
+    // metadata columns that cannot fit at this width. The full table returns
+    // automatically when the user widens the drawer.
+    const int availableWidth = event->size().width();
+    table->setColumnHidden( 2, availableWidth < 510 ); // experiment
+    table->setColumnHidden( 3, availableWidth < 650 ); // modified date
+    table->setColumnHidden( 4, availableWidth < 390 ); // size
+    table->horizontalHeader()->setSectionResizeMode( 0, QHeaderView::Stretch );
+    table->horizontalHeader()->setSectionResizeMode( 1, QHeaderView::ResizeToContents );
+    if ( !table->isColumnHidden( 4 ) )
+        table->horizontalHeader()->setSectionResizeMode( 4, QHeaderView::ResizeToContents );
 }
 
 QString ExperimentLibraryWidget::selectedCategory() const {
