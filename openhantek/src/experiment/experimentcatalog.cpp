@@ -21,6 +21,14 @@
 namespace {
 constexpr int FilesPerBatch = 96;
 
+Qt::CaseSensitivity pathCaseSensitivity() {
+#ifdef Q_OS_WIN
+    return Qt::CaseInsensitive;
+#else
+    return Qt::CaseSensitive;
+#endif
+}
+
 QString stableId( const QString &value ) {
     return QString::fromLatin1( QCryptographicHash::hash( value.toUtf8(), QCryptographicHash::Sha256 ).toHex() );
 }

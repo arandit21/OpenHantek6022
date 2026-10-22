@@ -48,6 +48,7 @@ class Mp4VideoRecorder {
     bool startupCompleted = false;
     QString workerError;
     QString outputPath;
+    std::thread worker;
 
     void encodeFrames( const QString &path, const QSize &frameSize, int framesPerSecond );
 };
