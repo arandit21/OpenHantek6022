@@ -138,8 +138,11 @@ bool recordAndReplayRaw( ExperimentManager &manager ) {
     file.close();
 
     RawPlaybackEngine playback;
-    if ( !check( playback.open( path, &error ) && playback.frameCount() == 5,
-                 QStringLiteral( "Could not reopen OHRAW for playback: %1" ).arg( error ) ) )
+    const bool playbackOpened = playback.open( path, &error );
+    if ( !check( playbackOpened, QStringLiteral( "Could not reopen OHRAW for playback: %1" ).arg( error ) ) )
+        return false;
+    if ( !check( playback.frameCount() == 5,
+                 QStringLiteral( "Expected 5 indexed OHRAW frames, found %1." ).arg( playback.frameCount() ) ) )
         return false;
     bool received = false;
     QObject::connect( &playback, &RawPlaybackEngine::frameReady, &playback,

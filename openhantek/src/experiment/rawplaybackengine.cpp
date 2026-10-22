@@ -125,16 +125,16 @@ bool RawPlaybackEngine::open( const QString &filePath, QString *errorMessage ) {
             QDataStream record( frameHeader );
             record.setByteOrder( QDataStream::LittleEndian );
             record.setVersion( QDataStream::Qt_6_0 );
+            quint8 frameType = 0;
             quint32 tag = 0;
             quint64 timestamp = 0;
             double interval = 0.0;
             quint32 ch1Count = 0;
             quint32 ch2Count = 0;
             quint32 droppedBefore = 0;
-            record >> tag >> timestamp >> interval >> ch1Count >> ch2Count >> droppedBefore;
-            Q_UNUSED( tag )
+            record >> frameType >> tag >> timestamp >> interval >> ch1Count >> ch2Count >> droppedBefore;
             const quint64 expectedSize = 1u + 4u + 8u + 8u + 4u + 4u + 4u + 8ull * ( quint64( ch1Count ) + ch2Count );
-            if ( record.status() != QDataStream::Ok || !std::isfinite( interval ) || interval <= 0.0 ||
+            if ( frameType != 1 || record.status() != QDataStream::Ok || !std::isfinite( interval ) || interval <= 0.0 ||
                  ch1Count > MaxSamplesPerChannel || ch2Count > MaxSamplesPerChannel ||
                  ( ch1Count == 0 && ch2Count == 0 ) || expectedSize != payloadSize ) {
                 close();
