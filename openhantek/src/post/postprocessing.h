@@ -29,6 +29,8 @@ class PostProcessing : public QObject {
      * @param processor
      */
     void registerProcessor( Processor *processor );
+    /// Registers a processor which should be applied to archived captures too.
+    void registerPlaybackProcessor( Processor *processor );
     void stop() { processing = false; }
 
 
@@ -37,6 +39,7 @@ class PostProcessing : public QObject {
     const unsigned channelCount;
     /// The list of processors. Processors are not memory managed by this class.
     std::vector< Processor * > processors;
+    std::vector< Processor * > playbackProcessors;
     ///
     std::unique_ptr< PPresult > currentData;
     static void convertData( const DSOsamples *source, PPresult *destination );
@@ -50,8 +53,11 @@ class PostProcessing : public QObject {
      * @param data
      */
     void input( const DSOsamples *data );
+    void inputPlayback( std::shared_ptr< PPresult > data, quint64 sequence );
 
   signals:
     void processingFinished( std::shared_ptr< PPresult > result );
+    void playbackProcessingFinished( std::shared_ptr< PPresult > result );
+    void playbackFrameProcessed( quint64 sequence );
 };
 

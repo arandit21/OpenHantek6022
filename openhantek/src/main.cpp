@@ -49,6 +49,12 @@
 #include "exporting/exporterregistry.h"
 #include "exporting/exportjson.h"
 
+// Research experiment storage and playback
+#include "experiment/experimentcatalog.h"
+#include "experiment/experimentmanager.h"
+#include "experiment/rawplaybackengine.h"
+#include "experiment/rawrecordingengine.h"
+
 // GUI
 #include "mainwindow.h"
 #include "selectdevice/selectsupporteddevice.h"
@@ -423,6 +429,10 @@ int main( int argc, char *argv[] ) {
     ExporterCSV exporterCSV;
     ExporterJSON exporterJSON;
     ExporterProcessor samplesToExportRaw( &exportRegistry );
+    ExperimentManager experimentManager;
+    ExperimentCatalog experimentCatalog( experimentManager.projectsRoot() );
+    RawRecordingEngine rawRecordingEngine;
+    RawPlaybackEngine rawPlaybackEngine;
     exportRegistry.registerExporter( &exporterCSV );
     exportRegistry.registerExporter( &exporterJSON );
 
@@ -440,14 +450,21 @@ int main( int argc, char *argv[] ) {
     GraphGenerator graphGenerator( &settings.scope, &settings.view );
 
     postProcessing.registerProcessor( &samplesToExportRaw );
+    postProcessing.registerProcessor( &rawRecordingEngine );
     // postProcessing.registerProcessor( &mathchannelGenerator );
     postProcessing.registerProcessor( &spectrumGenerator );
     postProcessing.registerProcessor( &graphGenerator );
+    postProcessing.registerPlaybackProcessor( &spectrumGenerator );
+    postProcessing.registerPlaybackProcessor( &graphGenerator );
 
     postProcessing.moveToThread( &postProcessingThread );
     QObject::connect( &dsoControl, &HantekDsoControl::samplesAvailable, &postProcessing, &PostProcessing::input );
     QObject::connect( &postProcessing, &PostProcessing::processingFinished, &exportRegistry, &ExporterRegistry::input,
                       Qt::DirectConnection );
+    QObject::connect( &rawPlaybackEngine, &RawPlaybackEngine::frameReady, &postProcessing, &PostProcessing::inputPlayback,
+                      Qt::QueuedConnection );
+    QObject::connect( &postProcessing, &PostProcessing::playbackFrameProcessed, &rawPlaybackEngine,
+                      &RawPlaybackEngine::frameProcessed, Qt::QueuedConnection );
 
     if ( verboseLevel )
         qDebug() << startupTime.elapsed() << "ms:"
@@ -514,12 +531,15 @@ int main( int argc, char *argv[] ) {
     if ( verboseLevel )
         qDebug() << startupTime.elapsed() << "ms:"
                  << "create main window";
-    MainWindow openHantekMainWindow( &dsoControl, &settings, &exportRegistry );
+    MainWindow openHantekMainWindow( &dsoControl, &settings, &exportRegistry, &experimentManager, &experimentCatalog,
+                                     &rawRecordingEngine, &rawPlaybackEngine );
     if ( reconnectSupervisor ) {
         QObject::connect( reconnectSupervisor.get(), &DeviceReconnectionSupervisor::connectionStateChanged, &openHantekMainWindow,
                           &MainWindow::deviceConnectionStateChanged );
     }
     QObject::connect( &postProcessing, &PostProcessing::processingFinished, &openHantekMainWindow, &MainWindow::showNewData );
+    QObject::connect( &postProcessing, &PostProcessing::playbackProcessingFinished, &openHantekMainWindow,
+                      &MainWindow::showNewData );
     QObject::connect( &exportRegistry, &ExporterRegistry::exporterProgressChanged, &openHantekMainWindow,
                       &MainWindow::exporterProgressChanged );
     QObject::connect( &exportRegistry, &ExporterRegistry::exporterStatusChanged, &openHantekMainWindow,

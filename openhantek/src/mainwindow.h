@@ -3,9 +3,11 @@
 #pragma once
 #include "post/ppresult.h"
 #include <QElapsedTimer>
+#include <QIcon>
 #include <QLineEdit>
 #include <QList>
 #include <QMainWindow>
+#include <QSize>
 #include <memory>
 
 #include "scopesettings.h"
@@ -15,6 +17,14 @@ class SpectrumGenerator;
 class HantekDsoControl;
 class DsoSettings;
 class ExporterRegistry;
+class ExperimentManager;
+class ExperimentCatalog;
+class RawRecordingEngine;
+class RawPlaybackEngine;
+class ExperimentLibraryWidget;
+class Mp4VideoRecorder;
+class QDockWidget;
+class QTimer;
 class DsoWidget;
 class HorizontalDock;
 class TriggerDock;
@@ -34,7 +44,8 @@ class MainWindow : public QMainWindow {
 
   public:
     explicit MainWindow( HantekDsoControl *dsoControl, DsoSettings *dsoSettings, ExporterRegistry *exporterRegistry,
-                         QWidget *parent = nullptr );
+                         ExperimentManager *experimentManager, ExperimentCatalog *experimentCatalog,
+                         RawRecordingEngine *rawRecorder, RawPlaybackEngine *rawPlayback, QWidget *parent = nullptr );
     ~MainWindow() override;
     QElapsedTimer elapsedTime;
 
@@ -60,11 +71,33 @@ class MainWindow : public QMainWindow {
     // Settings used for the whole program
     DsoSettings *dsoSettings;
     ExporterRegistry *exporterRegistry;
+    HantekDsoControl *dsoControl;
+    ExperimentManager *experimentManager;
+    ExperimentCatalog *experimentCatalog;
+    RawRecordingEngine *rawRecorder;
+    RawPlaybackEngine *rawPlayback;
+    std::unique_ptr< Mp4VideoRecorder > videoRecorder;
+    ExperimentLibraryWidget *libraryWidget = nullptr;
+    QDockWidget *libraryDock = nullptr;
+    QTimer *videoFrameTimer = nullptr;
+    QAction *recordDataAction = nullptr;
+    QAction *recordVideoAction = nullptr;
+    QIcon dataRecordIcon;
+    QIcon videoRecordIcon;
+    bool resumeSamplingAfterPlayback = false;
+    int videoFps = 30;
+    QSize videoSize;
+    qint64 videoStartedAtMs = 0;
+    bool closingAfterRecording = false;
 
     // Taking screenshots
     enum screenshotType_t { SCREENSHOT, HARDCOPY, PRINTER };
     screenshotType_t screenshotType;
     void screenShot( screenshotType_t screenshotType = SCREENSHOT, bool autoSave = false );
+    void toggleDataRecording();
+    void toggleVideoRecording();
+    void appendVideoFrame();
+    void openRecording( const QString &path );
 
     bool openDocument( QString docName );
     void setDeviceCommandUiEnabled( bool enabled );

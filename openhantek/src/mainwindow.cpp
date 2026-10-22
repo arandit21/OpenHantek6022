@@ -15,6 +15,12 @@
 #include "dsowidget.h"
 #include "exporting/exporterinterface.h"
 #include "exporting/exporterregistry.h"
+#include "experiment/experimentcatalog.h"
+#include "experiment/experimentlibrarywidget.h"
+#include "experiment/experimentmanager.h"
+#include "experiment/mp4videorecorder.h"
+#include "experiment/rawplaybackengine.h"
+#include "experiment/rawrecordingengine.h"
 #include "hantekdsocontrol.h"
 #include "usb/scopedevice.h"
 #include "viewconstants.h"
@@ -22,21 +28,42 @@
 #include "dsosettings.h"
 
 #include <QDesktopServices>
+#include <QDateTime>
+#include <QDockWidget>
+#include <QComboBox>
 #include <QDir>
+#include <QFileInfo>
 #include <QFileDialog>
+#include <QImage>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QLoggingCategory>
 #include <QMessageBox>
 #include <QPainter>
 #include <QPalette>
 #include <QPrintDialog>
 #include <QPrinter>
+#include <QPushButton>
+#include <QSaveFile>
+#include <QSettings>
+#include <QSignalBlocker>
+#include <QSlider>
+#include <QStyle>
+#include <QDialog>
+#include <QVBoxLayout>
+#include <QHBoxLayout>
 #include <QTimer>
 #include <QValidator>
 
 #include "OH_VERSION.h"
 
-MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, ExporterRegistry *exporterRegistry, QWidget *parent )
-    : QMainWindow( parent ), ui( new Ui::MainWindow ), dsoSettings( settings ), exporterRegistry( exporterRegistry ) {
+MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, ExporterRegistry *exporterRegistry,
+                        ExperimentManager *experimentManager, ExperimentCatalog *experimentCatalog,
+                        RawRecordingEngine *rawRecorder, RawPlaybackEngine *rawPlayback, QWidget *parent )
+    : QMainWindow( parent ), ui( new Ui::MainWindow ), dsoSettings( settings ), exporterRegistry( exporterRegistry ),
+      dsoControl( dsoControl ),
+      experimentManager( experimentManager ), experimentCatalog( experimentCatalog ), rawRecorder( rawRecorder ),
+      rawPlayback( rawPlayback ), videoRecorder( std::make_unique< Mp4VideoRecorder >() ) {
 
     if ( dsoSettings->scope.verboseLevel > 1 )
         qDebug() << " MainWindow::MainWindow()";
@@ -217,11 +244,84 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
     addDockWidget( Qt::RightDockWidgetArea, spectrumDock );
 
     restoreGeometry( dsoSettings->mainWindowGeometry );
-    restoreState( dsoSettings->mainWindowState );
 
     // Central oszilloscope widget
     dsoWidget = new DsoWidget( &dsoSettings->scope, &dsoSettings->view, spec, this );
     setCentralWidget( dsoWidget );
+
+    // The research library is a dockable workspace, while the original scope stays
+    // the central widget and retains the upstream graph layout and interaction.
+    libraryWidget = new ExperimentLibraryWidget( experimentCatalog, experimentManager, this );
+    libraryDock = new QDockWidget( tr( "Библиотека исследований" ), this );
+    libraryDock->setObjectName( QStringLiteral( "researchLibraryDock" ) );
+    libraryDock->setWidget( libraryWidget );
+    addDockWidget( Qt::BottomDockWidgetArea, libraryDock );
+    libraryDock->hide();
+    restoreState( dsoSettings->mainWindowState );
+    auto *libraryAction = new QAction( tr( "Библиотека" ), this );
+    libraryAction->setCheckable( true );
+    libraryAction->setToolTip( tr( "Открыть библиотеку экспериментов, фотографий, видео и записей сигналов" ) );
+    ui->toolBar->addSeparator();
+    ui->toolBar->addAction( libraryAction );
+    connect( libraryAction, &QAction::toggled, libraryDock, &QDockWidget::setVisible );
+    connect( libraryDock, &QDockWidget::visibilityChanged, libraryAction, &QAction::setChecked );
+    connect( libraryWidget, &ExperimentLibraryWidget::openRecordingRequested, this, &MainWindow::openRecording );
+    connect( libraryWidget, &ExperimentLibraryWidget::activeExperimentChanged, this, [ this ]( const QString &path ) {
+        statusBar()->showMessage( tr( "Активный эксперимент: %1" ).arg( QFileInfo( path ).fileName() ), 5000 );
+    } );
+    connect( experimentCatalog, &ExperimentCatalog::scanFailed, this,
+             [ this ]( const QString &message ) { statusBar()->showMessage( message, 10000 ); } );
+    experimentCatalog->startRescan();
+
+    recordDataAction = new QAction( tr( "Запись данных" ), this );
+    recordDataAction->setCheckable( true );
+    dataRecordIcon = QIcon( iconPath + "exporter.svg" );
+    recordDataAction->setIcon( dataRecordIcon );
+    recordDataAction->setToolTip( tr( "Записывать измерения CH1 и CH2 в формате OHRAW" ) );
+    ui->toolBar->addAction( recordDataAction );
+    connect( recordDataAction, &QAction::triggered, this, &MainWindow::toggleDataRecording );
+
+    recordVideoAction = new QAction( tr( "Запись видео MP4" ), this );
+    recordVideoAction->setCheckable( true );
+    videoRecordIcon = QIcon( iconPath + "camera.svg" );
+    recordVideoAction->setIcon( videoRecordIcon );
+    recordVideoAction->setToolTip( tr( "Снимать окно осциллографа в файл MP4" ) );
+    ui->toolBar->addAction( recordVideoAction );
+    recordVideoAction->setEnabled( Mp4VideoRecorder::isSupported() );
+    if ( !Mp4VideoRecorder::isSupported() )
+        recordVideoAction->setText( tr( "Запись видео недоступна" ) );
+    connect( recordVideoAction, &QAction::triggered, this, &MainWindow::toggleVideoRecording );
+    videoFrameTimer = new QTimer( this );
+    connect( videoFrameTimer, &QTimer::timeout, this, &MainWindow::appendVideoFrame );
+
+    connect( rawRecorder, &RawRecordingEngine::recordingFinished, this,
+             [ this ]( const QString &path, quint64 frames, quint64 dropped ) {
+                 recordDataAction->setChecked( false );
+                 recordDataAction->setEnabled( true );
+                 recordDataAction->setText( tr( "Запись данных" ) );
+                 recordDataAction->setIcon( dataRecordIcon );
+                 QString error;
+                 if ( !experimentManager->registerDataFile( path, &error ) )
+                     statusBar()->showMessage( tr( "Файл записан, ошибка регистрации в библиотеке: %1" ).arg( error ), 12000 );
+                 else
+                     statusBar()->showMessage( tr( "OHRAW записан: %1 блоков; пропущено: %2" ).arg( frames ).arg( dropped ), 8000 );
+                 experimentCatalog->startRescan();
+                 if ( closingAfterRecording )
+                     QTimer::singleShot( 0, this, &QWidget::close );
+             } );
+    connect( rawRecorder, &RawRecordingEngine::recordingFailed, this, [ this ]( const QString &message ) {
+        recordDataAction->setChecked( false );
+        recordDataAction->setEnabled( true );
+        recordDataAction->setText( tr( "Запись данных" ) );
+        recordDataAction->setIcon( dataRecordIcon );
+        QMessageBox::critical( this, tr( "Запись измерений" ), message );
+        if ( closingAfterRecording )
+            QTimer::singleShot( 0, this, &QWidget::close );
+    } );
+    connect( rawRecorder, &RawRecordingEngine::recordingStarted, this,
+             [ this ]( const QString &path ) { statusBar()->showMessage( tr( "Запись CH1/CH2: %1" ).arg( path ) ); } );
+    connect( rawRecorder, &RawRecordingEngine::droppedBlocksChanged, this,
+             [ this ]( quint64 count ) { statusBar()->showMessage( tr( "Предупреждение: пропущено блоков записи: %1" ).arg( count ) ); } );
 
     deviceCommandWidgets = { voltageDock, horizontalDock, triggerDock, spectrumDock, dsoWidget };
     deviceCommandActions = { ui->actionOpen, ui->actionSampling, ui->actionRefresh, ui->actionCalibrateOffset,
@@ -554,6 +654,184 @@ MainWindow::~MainWindow() {
     delete ui;
 }
 
+void MainWindow::toggleDataRecording() {
+    if ( recordDataAction->isChecked() ) {
+        if ( !dsoControl->isSamplingUI() ) {
+            recordDataAction->setChecked( false );
+            QMessageBox::information( this, tr( "Запись измерений" ),
+                                      tr( "Сначала запустите непрерывный захват осциллографа." ) );
+            return;
+        }
+        QString error;
+        const QString path = experimentManager->nextRawDataPath( &error );
+        if ( path.isEmpty() || !rawRecorder->start( path, &error ) ) {
+            recordDataAction->setChecked( false );
+            QMessageBox::critical( this, tr( "Запись измерений" ), error.isEmpty() ? tr( "Не удалось начать запись." ) : error );
+            return;
+        }
+        recordDataAction->setText( tr( "Остановить запись данных" ) );
+        recordDataAction->setToolTip( tr( "Остановить запись измерений CH1/CH2" ) );
+        recordDataAction->setIcon( style()->standardIcon( QStyle::SP_MediaStop ) );
+        return;
+    }
+    if ( rawRecorder->isRecording() ) {
+        rawRecorder->stop();
+        recordDataAction->setEnabled( false );
+        recordDataAction->setText( tr( "Завершение записи…" ) );
+    }
+}
+
+void MainWindow::toggleVideoRecording() {
+    if ( recordVideoAction->isChecked() ) {
+        QDialog settingsDialog( this );
+        settingsDialog.setWindowTitle( tr( "Параметры записи видео" ) );
+        auto *layout = new QVBoxLayout( &settingsDialog );
+        auto *size = new QComboBox( &settingsDialog );
+        size->addItem( tr( "Размер окна (%1 × %2)" ).arg( width() ).arg( height() ), QSize( width(), height() ) );
+        size->addItem( QStringLiteral( "1280 × 720" ), QSize( 1280, 720 ) );
+        size->addItem( QStringLiteral( "1920 × 1080" ), QSize( 1920, 1080 ) );
+        const int savedSize = size->findData( QSettings().value( "experiment/videoSize", size->itemData( 0 ) ) );
+        size->setCurrentIndex( savedSize < 0 ? 0 : savedSize );
+        auto *fps = new QComboBox( &settingsDialog );
+        fps->addItem( QStringLiteral( "15 кадр/с" ), 15 );
+        fps->addItem( QStringLiteral( "25 кадр/с" ), 25 );
+        fps->addItem( QStringLiteral( "30 кадр/с" ), 30 );
+        const int savedFps = fps->findData( QSettings().value( "experiment/videoFps", 30 ) );
+        fps->setCurrentIndex( savedFps < 0 ? 2 : savedFps );
+        auto *buttons = new QHBoxLayout;
+        auto *startButton = new QPushButton( tr( "Начать запись" ), &settingsDialog );
+        auto *cancelButton = new QPushButton( tr( "Отмена" ), &settingsDialog );
+        buttons->addStretch( 1 );
+        buttons->addWidget( startButton );
+        buttons->addWidget( cancelButton );
+        layout->addWidget( new QLabel( tr( "Разрешение видео" ), &settingsDialog ) );
+        layout->addWidget( size );
+        layout->addWidget( new QLabel( tr( "Частота кадров" ), &settingsDialog ) );
+        layout->addWidget( fps );
+        layout->addLayout( buttons );
+        connect( startButton, &QPushButton::clicked, &settingsDialog, &QDialog::accept );
+        connect( cancelButton, &QPushButton::clicked, &settingsDialog, &QDialog::reject );
+        if ( settingsDialog.exec() != QDialog::Accepted ) {
+            recordVideoAction->setChecked( false );
+            return;
+        }
+        videoSize = size->currentData().toSize();
+        videoFps = fps->currentData().toInt();
+        QSettings().setValue( "experiment/videoSize", videoSize );
+        QSettings().setValue( "experiment/videoFps", videoFps );
+        QString error;
+        const QString path = experimentManager->nextVideoPath( &error );
+        if ( path.isEmpty() || !videoRecorder->start( path, videoSize, videoFps, &error ) ) {
+            recordVideoAction->setChecked( false );
+            QMessageBox::critical( this, tr( "Запись MP4" ), error.isEmpty() ? tr( "Не удалось начать запись видео." ) : error );
+            return;
+        }
+        videoStartedAtMs = QDateTime::currentMSecsSinceEpoch();
+        videoFrameTimer->start( qMax( 1, 1000 / videoFps ) );
+        recordVideoAction->setText( tr( "Остановить видео" ) );
+        statusBar()->showMessage( tr( "Запись MP4 начата: %1" ).arg( path ) );
+        return;
+    }
+    if ( videoRecorder->isRecording() ) {
+        videoFrameTimer->stop();
+        QString error;
+        if ( !videoRecorder->stop( &error ) ) {
+            QMessageBox::critical( this, tr( "Запись MP4" ), error );
+        } else {
+            const QString path = videoRecorder->filePath();
+            if ( !experimentManager->registerVideo( path, &error ) )
+                statusBar()->showMessage( tr( "Видео записано, но не добавлено в библиотеку: %1" ).arg( error ), 10000 );
+            else
+                statusBar()->showMessage( tr( "Видео сохранено: %1 (%2 с)" ).arg( path ).arg( videoStartedAtMs > 0
+                    ? ( QDateTime::currentMSecsSinceEpoch() - videoStartedAtMs ) / 1000 : 0 ), 8000 );
+            experimentCatalog->startRescan();
+        }
+    }
+    recordVideoAction->setChecked( false );
+    recordVideoAction->setText( tr( "Запись видео MP4" ) );
+    recordVideoAction->setIcon( videoRecordIcon );
+}
+
+void MainWindow::appendVideoFrame() {
+    if ( !videoRecorder || !videoRecorder->isRecording() ) {
+        videoFrameTimer->stop();
+        return;
+    }
+    QImage frame = grab().toImage();
+    if ( frame.size() != videoSize )
+        frame = frame.scaled( videoSize, Qt::IgnoreAspectRatio, Qt::SmoothTransformation );
+    QString error;
+    if ( !videoRecorder->appendFrame( frame, &error ) ) {
+        videoFrameTimer->stop();
+        videoRecorder->stop();
+        recordVideoAction->setChecked( false );
+        recordVideoAction->setText( tr( "Запись видео MP4" ) );
+        QMessageBox::critical( this, tr( "Запись MP4" ), error );
+    } else {
+        const qint64 seconds = ( QDateTime::currentMSecsSinceEpoch() - videoStartedAtMs ) / 1000;
+        statusBar()->showMessage( tr( "Запись MP4 · %1 · %2 кадр/с" ).arg( seconds ).arg( videoFps ) );
+    }
+}
+
+void MainWindow::openRecording( const QString &path ) {
+    QString error;
+    if ( !rawPlayback->open( path, &error ) ) {
+        QMessageBox::critical( this, tr( "Воспроизведение OHRAW" ), error );
+        return;
+    }
+    resumeSamplingAfterPlayback = dsoControl->isSamplingUI();
+    if ( resumeSamplingAfterPlayback )
+        dsoControl->enableSamplingUI( false );
+
+    auto *dialog = new QDialog( this );
+    dialog->setAttribute( Qt::WA_DeleteOnClose );
+    dialog->setWindowTitle( tr( "Запись сигнала — %1" ).arg( QFileInfo( path ).fileName() ) );
+    dialog->resize( 520, 110 );
+    auto *layout = new QVBoxLayout( dialog );
+    auto *position = new QSlider( Qt::Horizontal, dialog );
+    position->setRange( 0, qMax( 0, rawPlayback->frameCount() - 1 ) );
+    auto *controls = new QHBoxLayout;
+    auto *playPause = new QPushButton( tr( "Воспроизвести" ), dialog );
+    auto *close = new QPushButton( tr( "Закрыть" ), dialog );
+    auto *frameLabel = new QLabel( tr( "0 / %1" ).arg( rawPlayback->frameCount() ), dialog );
+    controls->addWidget( playPause );
+    controls->addWidget( position, 1 );
+    controls->addWidget( frameLabel );
+    controls->addWidget( close );
+    layout->addLayout( controls );
+    connect( playPause, &QPushButton::clicked, dialog, [ this, playPause ] {
+        if ( rawPlayback->isPlaying() ) {
+            rawPlayback->pause();
+            playPause->setText( tr( "Воспроизвести" ) );
+        } else {
+            rawPlayback->play();
+            playPause->setText( tr( "Пауза" ) );
+        }
+    } );
+    connect( close, &QPushButton::clicked, dialog, &QDialog::accept );
+    connect( position, &QSlider::sliderMoved, rawPlayback, &RawPlaybackEngine::seek );
+    connect( rawPlayback, &RawPlaybackEngine::positionChanged, dialog,
+             [ position, frameLabel ]( int frame, int count ) {
+                 const QSignalBlocker blocker( position );
+                 position->setMaximum( qMax( 0, count - 1 ) );
+                 position->setValue( frame );
+                 frameLabel->setText( QStringLiteral( "%1 / %2" ).arg( frame + 1 ).arg( count ) );
+             } );
+    connect( rawPlayback, &RawPlaybackEngine::playbackChanged, playPause,
+             [ playPause ]( bool playing ) { playPause->setText( playing ? tr( "Пауза" ) : tr( "Воспроизвести" ) ); } );
+    connect( rawPlayback, &RawPlaybackEngine::dataGapSkipped, dialog, [ this ]( quint32 blocks ) {
+        statusBar()->showMessage( tr( "В исходной записи пропущено блоков: %1" ).arg( blocks ), 7000 );
+    } );
+    connect( dialog, &QDialog::finished, this, [ this ] {
+        rawPlayback->close();
+        if ( resumeSamplingAfterPlayback )
+            dsoControl->enableSamplingUI( true );
+        resumeSamplingAfterPlayback = false;
+    } );
+    dialog->show();
+    rawPlayback->play();
+}
+
 
 void MainWindow::showNewData( std::shared_ptr< PPresult > newData ) {
     if ( dsoSettings->scope.verboseLevel > 5 )
@@ -624,7 +902,7 @@ void MainWindow::setDeviceCommandUiEnabled( bool enabled ) {
 void MainWindow::screenShot( screenshotType_t screenshotType, bool autoSafe ) {
     if ( dsoSettings->scope.verboseLevel > 2 )
         qDebug() << "  MainWindow::screenShot()" << screenshotType << autoSafe;
-    auto activeWindow = screenshotType == SCREENSHOT ? qApp->activeWindow() : dsoWidget;
+    QWidget *activeWindow = screenshotType == SCREENSHOT ? this : dsoWidget;
     QPixmap screenshot( activeWindow->size() ); // prepare a pixmap with the correct size
     int sw = screenshot.width();
     int sh = screenshot.height();
@@ -643,6 +921,15 @@ void MainWindow::screenShot( screenshotType_t screenshotType, bool autoSafe ) {
     QString docName = now.toString( tr( "yyyy-MM-dd hh:mm:ss" ) );
     QString fileName = now.toString( tr( "yyyyMMdd_hhmmss" ) );
     fileName = QDir( lastSaveAsDir ).absoluteFilePath( fileName );
+    if ( autoSafe && screenshotType == SCREENSHOT && experimentManager ) {
+        QString error;
+        const QString experimentPath = experimentManager->nextImagePath( &error );
+        if ( experimentPath.isEmpty() ) {
+            QMessageBox::critical( this, tr( "Скриншот" ), error );
+            return;
+        }
+        fileName = experimentPath;
+    }
     statusBar()->showMessage( docName ); // show date in bottom line
 
     if ( screenshotType != SCREENSHOT && dsoSettings->view.zoom && dsoSettings->view.zoomImage &&
@@ -676,6 +963,29 @@ void MainWindow::screenShot( screenshotType_t screenshotType, bool autoSafe ) {
             if ( !screenshot.save( fileName ) )
                 QMessageBox::critical( this, QCoreApplication::applicationName(),
                                        tr( "Write error\n%1" ).arg( QFileInfo{ fileName }.absoluteFilePath() ) );
+            else if ( screenshotType == SCREENSHOT && experimentManager ) {
+                QJsonObject metadata;
+                metadata.insert( QStringLiteral( "schema" ), QStringLiteral( "org.openhantek.screenshot/1" ) );
+                metadata.insert( QStringLiteral( "createdAtUtc" ), QDateTime::currentDateTimeUtc().toString( Qt::ISODateWithMs ) );
+                metadata.insert( QStringLiteral( "application" ), QCoreApplication::applicationName() );
+                metadata.insert( QStringLiteral( "applicationVersion" ), QCoreApplication::applicationVersion() );
+                metadata.insert( QStringLiteral( "capture" ), QStringLiteral( "main-window" ) );
+                metadata.insert( QStringLiteral( "width" ), screenshot.width() );
+                metadata.insert( QStringLiteral( "height" ), screenshot.height() );
+                QSaveFile sidecar( QFileInfo( fileName ).dir().filePath( QFileInfo( fileName ).completeBaseName() + ".json" ) );
+                const QByteArray bytes = QJsonDocument( metadata ).toJson( QJsonDocument::Indented );
+                if ( sidecar.open( QIODevice::WriteOnly ) && sidecar.write( bytes ) == bytes.size() && sidecar.commit() ) {
+                    QString error;
+                    if ( !experimentManager->registerImage( fileName, &error ) )
+                        statusBar()->showMessage( tr( "Скриншот сохранён, но не добавлен в библиотеку: %1" ).arg( error ), 10000 );
+                    else
+                        experimentCatalog->startRescan();
+                } else {
+                    QMessageBox::warning( this, tr( "Метаданные скриншота" ),
+                                          tr( "Изображение сохранено, но JSON-метаданные записать не удалось: %1" )
+                                              .arg( sidecar.errorString() ) );
+                }
+            }
             return;
         }
         filters << tr( "Image (*.png *.jpg)" ) << tr( "Portable Document Format (*.pdf)" );
@@ -752,6 +1062,25 @@ bool MainWindow::openDocument( QString docName ) {
 void MainWindow::closeEvent( QCloseEvent *event ) {
     if ( dsoSettings->scope.verboseLevel > 2 )
         qDebug() << "  MainWindow::closeEvent()";
+    if ( rawRecorder && rawRecorder->isBusy() ) {
+        event->ignore();
+        closingAfterRecording = true;
+        recordDataAction->setEnabled( false );
+        if ( rawRecorder->isRecording() )
+            rawRecorder->stop();
+        statusBar()->showMessage( tr( "Завершение файла записи перед закрытием…" ) );
+        return;
+    }
+    if ( videoRecorder && videoRecorder->isRecording() ) {
+        videoFrameTimer->stop();
+        QString error;
+        if ( !videoRecorder->stop( &error ) )
+            qWarning() << "Could not finalize MP4 while closing:" << error;
+        else {
+            const QString path = videoRecorder->filePath();
+            experimentManager->registerVideo( path );
+        }
+    }
     if ( dsoSettings->alwaysSave ) {
         dsoSettings->mainWindowGeometry = saveGeometry();
         dsoSettings->mainWindowState = saveState();
