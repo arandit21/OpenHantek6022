@@ -1,6 +1,6 @@
 # OpenHantek Laboratory — Windows
 
-Русская сборка приложения для двухканальных USB-осциллографов Hantek 6022BE/6022BL и совместимых моделей. Интерфейс и справочные материалы подготовлены для русскоязычных пользователей, в том числе в странах СНГ.
+Русская сборка приложения для двухканальных USB-осциллографов Hantek 6022BE/6022BL и совместимых моделей. Интерфейс и справочные материалы подготовлены для русскоязычных пользователей.
 
 **[Скачать Windows x64 ZIP](https://github.com/arandit21/OpenHantek6022/releases/latest/download/OpenHantek-Laboratory-Windows-x64.zip)** · [Все релизы](https://github.com/arandit21/OpenHantek6022/releases)
 
