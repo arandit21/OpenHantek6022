@@ -15,6 +15,12 @@
 #include "dsowidget.h"
 #include "exporting/exporterinterface.h"
 #include "exporting/exporterregistry.h"
+#include "experiment/experimentcatalog.h"
+#include "experiment/experimentlibrarywidget.h"
+#include "experiment/experimentmanager.h"
+#include "experiment/mp4videorecorder.h"
+#include "experiment/rawplaybackengine.h"
+#include "experiment/rawrecordingengine.h"
 #include "hantekdsocontrol.h"
 #include "usb/scopedevice.h"
 #include "viewconstants.h"
@@ -22,39 +28,136 @@
 #include "dsosettings.h"
 
 #include <QDesktopServices>
+#include <QDateTime>
+#include <QCloseEvent>
+#include <QDockWidget>
+#include <QComboBox>
 #include <QDir>
+#include <QFileInfo>
 #include <QFileDialog>
+#include <QFont>
+#include <QImage>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QLabel>
 #include <QLoggingCategory>
 #include <QMessageBox>
+#include <QMenu>
 #include <QPainter>
 #include <QPalette>
 #include <QPrintDialog>
 #include <QPrinter>
+#include <QPushButton>
+#include <QResizeEvent>
+#include <QSaveFile>
+#include <QSettings>
+#include <QSignalBlocker>
+#include <QSlider>
+#include <QSizePolicy>
+#include <QStyle>
+#include <QDialog>
+#include <QVBoxLayout>
+#include <QHBoxLayout>
 #include <QTimer>
+#include <QToolBar>
+#include <QToolButton>
 #include <QValidator>
+
+#include <algorithm>
 
 #include "OH_VERSION.h"
 
-MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, ExporterRegistry *exporterRegistry, QWidget *parent )
-    : QMainWindow( parent ), ui( new Ui::MainWindow ), dsoSettings( settings ), exporterRegistry( exporterRegistry ) {
+MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, ExporterRegistry *exporterRegistry,
+                        ExperimentManager *experimentManager, ExperimentCatalog *experimentCatalog,
+                        RawRecordingEngine *rawRecorder, RawPlaybackEngine *rawPlayback, QWidget *parent )
+    : QMainWindow( parent ), ui( new Ui::MainWindow ), dsoSettings( settings ), exporterRegistry( exporterRegistry ),
+      dsoControl( dsoControl ),
+      experimentManager( experimentManager ), experimentCatalog( experimentCatalog ), rawRecorder( rawRecorder ),
+      rawPlayback( rawPlayback ), videoRecorder( std::make_unique< Mp4VideoRecorder >() ) {
 
     if ( dsoSettings->scope.verboseLevel > 1 )
         qDebug() << " MainWindow::MainWindow()";
 
     // suppress nasty warnings, e.g. "kf5.kio.core: Invalid URL ..." or "qt.qpa.xcb: QXcbConnection: XCB error: 3 (BadWindow) ..."
     QLoggingCategory::setFilterRules( "kf5.kio.core=false\nqt.qpa.xcb=false" );
-    QVariantMap colorMap;
-    QString iconPath = QString( ":/images/" );
-    if ( QPalette().color( QPalette::Window ).lightness() < 128 ) { // automatic light/dark icon switch
-        iconPath += "darktheme/";                                   // select top window icons accordingly
-        colorMap.insert( "color-off", QColor( 208, 208, 208 ) );    // light grey normal
-        colorMap.insert( "color-active", QColor( 255, 255, 255 ) ); // white when selected
-    } else {
-        iconPath += "lighttheme/";
-    }
+    // The selected laboratory variant has a light shell, regardless of the
+    // operating-system palette; use matching dark glyphs in its toolbar.
+    const QString iconPath = QStringLiteral( ":/images/lighttheme/" );
     elapsedTime.start();
 
     ui->setupUi( this );
+    ui->menuFile->setTitle( tr( "Файл" ) );
+    ui->menuExport->setTitle( tr( "Экспорт" ) );
+    ui->menuView->setTitle( tr( "Вид" ) );
+    ui->menuOscilloscope->setTitle( tr( "Осциллограф" ) );
+    ui->menuHelp->setTitle( tr( "Помощь" ) );
+    ui->actionOpen->setText( tr( "Открыть настройки…" ) );
+    ui->actionSave->setText( tr( "Сохранить настройки" ) );
+    ui->actionSave_as->setText( tr( "Сохранить настройки как…" ) );
+    ui->actionExit->setText( tr( "Выход" ) );
+    ui->actionRefresh->setText( tr( "Перезапуск захвата" ) );
+    ui->actionPhosphor->setText( tr( "Люминофор" ) );
+    ui->actionHistogram->setText( tr( "Гистограмма" ) );
+    ui->actionZoom->setText( tr( "Увеличение" ) );
+    ui->actionMeasure->setText( tr( "Измерения" ) );
+    ui->actionCalibrateOffset->setText( tr( "Калибровка смещения" ) );
+    ui->actionManualCommand->setText( tr( "Ручная команда" ) );
+    ui->actionUserManual->setText( tr( "Руководство пользователя" ) );
+    ui->actionACmodification->setText( tr( "Модификация AC-входа" ) );
+    ui->actionFrequencyGeneratorModification->setText( tr( "Модификация генератора частоты" ) );
+    ui->actionAbout->setText( tr( "О программе…" ) );
+    ui->actionAboutQt->setText( tr( "О Qt…" ) );
+    // Keep the upstream oscilloscope widget intact inside the approved light
+    // laboratory shell and its compact vertical tool rail.
+    ui->toolBar->setOrientation( Qt::Vertical );
+    addToolBar( Qt::LeftToolBarArea, ui->toolBar );
+    ui->toolBar->setToolButtonStyle( Qt::ToolButtonTextUnderIcon );
+    ui->toolBar->setIconSize( QSize( 24, 24 ) );
+    ui->toolBar->setMovable( false );
+    ui->toolBar->setFloatable( false );
+    ui->toolBar->setMinimumWidth( 88 );
+    ui->toolBar->setMaximumWidth( 104 );
+    ui->toolBar->setStyleSheet( QStringLiteral(
+        "QToolBar { background: #f4f6f9; border: 0; border-right: 1px solid #d9e0e8; spacing: 3px; padding: 6px 4px; }"
+        "QToolButton { min-width: 74px; max-width: 92px; min-height: 54px; padding: 4px 2px; border-radius: 5px; }"
+        "QToolButton:hover { background: #e5edf7; }"
+        "QToolButton:checked { background: #d7e9ff; color: #075fc4; }"
+        "QToolBar::separator { height: 1px; background: #d9e0e8; margin: 4px 8px; }" ) );
+    setStyleSheet( QStringLiteral(
+        "QCheckBox::indicator { width: 16px; height: 16px; border: 1px solid #94a3b8; border-radius: 3px; background: #ffffff; }"
+        "QCheckBox::indicator:hover { border-color: #2563eb; background: #eff6ff; }"
+        "QCheckBox::indicator:checked { border-color: #2563eb; background: #2563eb; image: url(:/images/lighttheme/check.svg); }"
+        "QCheckBox::indicator:checked:hover { background: #1d4ed8; }"
+        "QCheckBox::indicator:disabled { border-color: #cbd5e1; background: #e2e8f0; }"
+        "QCheckBox::indicator:checked:disabled { border-color: #94a3b8; background: #94a3b8; image: url(:/images/lighttheme/check.svg); }"
+        "QCheckBox:focus { outline: 2px solid #60a5fa; outline-offset: 2px; }"
+        "QDockWidget { color: #243247; }"
+        "QDockWidget::title { background: #eef2f6; border: 1px solid #d6dee8; border-radius: 5px; padding: 6px 8px; font-weight: 600; }"
+        "QComboBox, QLineEdit { background: #ffffff; color: #243247; border: 1px solid #cbd5e1; border-radius: 5px; padding: 5px 7px; min-height: 22px; }"
+        "QComboBox:hover, QLineEdit:hover { border-color: #8da9c8; }"
+        "QComboBox:focus, QLineEdit:focus { border-color: #1677e8; }"
+        "QComboBox QAbstractItemView { background: #ffffff; color: #243247; selection-background-color: #1677e8; selection-color: #ffffff; }"
+        "QPushButton { background: #ffffff; color: #243247; border: 1px solid #cbd5e1; border-radius: 5px; padding: 5px 8px; }"
+        "QPushButton:hover { background: #f4f8fd; border-color: #8da9c8; }"
+        "QTableWidget, QTreeWidget, QListWidget { background: #ffffff; color: #243247; alternate-background-color: #f5f8fc; border: 1px solid #d6dee8; selection-background-color: #1677e8; selection-color: #ffffff; }"
+        "QHeaderView::section { background: #eef2f6; color: #334155; border: 0; border-bottom: 1px solid #d6dee8; padding: 5px 6px; font-weight: 600; }"
+        "QMenuBar { background: #f8fafc; color: #243247; }"
+        "QMenuBar::item:selected { background: #e5effb; }"
+        "QMenu { background: #ffffff; color: #243247; border: 1px solid #d6dee8; }"
+        "QMenu::item:selected { background: #1677e8; color: #ffffff; }" ) );
+    // This workspace design is intentionally light; trace colors and the
+    // oscilloscope's own plot rendering remain controlled by DsoWidget.
+    QPalette workspacePalette = palette();
+    workspacePalette.setColor( QPalette::Window, QColor( 246, 248, 251 ) );
+    workspacePalette.setColor( QPalette::WindowText, QColor( 30, 41, 59 ) );
+    workspacePalette.setColor( QPalette::Base, QColor( 255, 255, 255 ) );
+    workspacePalette.setColor( QPalette::AlternateBase, QColor( 241, 245, 249 ) );
+    workspacePalette.setColor( QPalette::Text, QColor( 30, 41, 59 ) );
+    workspacePalette.setColor( QPalette::Button, QColor( 244, 246, 249 ) );
+    workspacePalette.setColor( QPalette::ButtonText, QColor( 30, 41, 59 ) );
+    workspacePalette.setColor( QPalette::Highlight, QColor( 191, 219, 254 ) );
+    workspacePalette.setColor( QPalette::HighlightedText, QColor( 15, 23, 42 ) );
+    setPalette( workspacePalette );
     iconPause = QIcon( iconPath + "pause.svg" );
     iconPlay = QIcon( iconPath + "play.svg" );
     ui->actionSampling->setIcon( iconPause );
@@ -113,6 +216,7 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
     ui->actionExit->setToolTip( tr( "Exit the application" ) );
     ui->actionSettings->setIcon( QIcon( iconPath + "settings.svg" ) );
     ui->actionSettings->setToolTip( tr( "Define scope settings, analysis parameters and colors" ) );
+    ui->actionSettings->setText( tr( "Настройки" ) );
     ui->actionCalibrateOffset->setIcon( QIcon( iconPath + "offset.svg" ) );
     ui->actionCalibrateOffset->setToolTip( tr( "Short-circuit both inputs and slowly select all voltage gain settings" ) );
     ui->actionManualCommand->setIcon( QIcon( iconPath + "terminal.svg" ) );
@@ -132,21 +236,21 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
     // Window title
     setWindowIcon( QIcon( ":/images/OpenHantek.svg" ) );
     setWindowTitle( dsoControl->getDevice()->isRealHW()
-                        ? tr( "OpenHantek6022 (%1) - Device %2 (FW%3)" )
+                        ? tr( "OpenHantek Laboratory (%1) — Прибор %2 (FW%3)" )
                               .arg( QString::fromStdString( VERSION ), dsoControl->getModel()->name )
                               .arg( dsoControl->getDevice()->getFwVersion(), 4, 16, QChar( '0' ) )
-                        : tr( "OpenHantek6022 (%1) - " ).arg( QString::fromStdString( VERSION ) ) + tr( "Demo Mode" ) );
+                        : tr( "OpenHantek Laboratory (%1) — Демо режим" ).arg( QString::fromStdString( VERSION ) ) );
 
 #if ( QT_VERSION >= QT_VERSION_CHECK( 5, 6, 0 ) )
     setDockOptions( dockOptions() | QMainWindow::GroupedDragging );
 #endif
     QAction *action;
-    action = new QAction( QIcon( iconPath + "camera.svg" ), tr( "&Screenshot" ), this );
+    action = new QAction( QIcon( iconPath + "camera.svg" ), tr( "Снимок экрана" ), this );
     action->setToolTip( tr( "Make an immediate screenshot of the program window and save it into the current directory" ) );
     connect( action, &QAction::triggered, this, [ this ]() { screenShot( SCREENSHOT, true ); } );
     ui->menuExport->addAction( action );
 
-    action = new QAction( QIcon( iconPath + "clone.svg" ), tr( "&Hardcopy" ), this );
+    action = new QAction( QIcon( iconPath + "clone.svg" ), tr( "Печатная копия" ), this );
     action->setToolTip( tr( "Make an immediate (printable) hardcopy of the display and save it into the current directory" ) );
     connect( action, &QAction::triggered, this, [ this ]() {
         dsoWidget->switchToPrintColors();
@@ -156,12 +260,12 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
 
     ui->menuExport->addSeparator();
 
-    action = new QAction( QIcon( iconPath + "save_as.svg" ), tr( "Save Screenshot As .." ), this );
+    action = new QAction( QIcon( iconPath + "save_as.svg" ), tr( "Сохранить снимок как…" ), this );
     action->setToolTip( tr( "Make a screenshot of the program window and define the storage location" ) );
     connect( action, &QAction::triggered, this, [ this ]() { screenShot( SCREENSHOT ); } );
     ui->menuExport->addAction( action );
 
-    action = new QAction( QIcon( iconPath + "save_as.svg" ), tr( "Save Hardcopy As .." ), this );
+    action = new QAction( QIcon( iconPath + "save_as.svg" ), tr( "Сохранить печатную копию как…" ), this );
     action->setToolTip( tr( "Make a (printable) hardcopy of the display and define the storage location" ) );
     connect( action, &QAction::triggered, this, [ this ]() {
         dsoWidget->switchToPrintColors();
@@ -169,7 +273,7 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
     } );
     ui->menuExport->addAction( action );
 
-    action = new QAction( QIcon( iconPath + "print.svg" ), tr( "&Print Screen .." ), this );
+    action = new QAction( QIcon( iconPath + "print.svg" ), tr( "Печать экрана…" ), this );
     action->setToolTip( tr( "Send the hardcopy to a printer" ) );
     connect( action, &QAction::triggered, this, [ this ]() {
         dsoWidget->switchToPrintColors();
@@ -215,13 +319,282 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
     addDockWidget( Qt::RightDockWidgetArea, horizontalDock );
     addDockWidget( Qt::RightDockWidgetArea, triggerDock );
     addDockWidget( Qt::RightDockWidgetArea, spectrumDock );
+    parameterDocks = { voltageDock, horizontalDock, triggerDock, spectrumDock };
+    for ( QDockWidget *dock : parameterDocks ) {
+        dock->setMinimumWidth( 280 );
+        dock->setMaximumWidth( 380 );
+    }
+    // The four existing device docks remain independent, functional Qt docks.
+    // The first title bar provides one consistent hide control for the group.
+    auto *parametersTitleBar = new QWidget( voltageDock );
+    auto *parametersTitleLayout = new QHBoxLayout( parametersTitleBar );
+    parametersTitleLayout->setContentsMargins( 10, 2, 4, 2 );
+    auto *parametersTitle = new QLabel( tr( "Параметры" ), parametersTitleBar );
+    QFont parametersTitleFont = parametersTitle->font();
+    parametersTitleFont.setBold( true );
+    parametersTitle->setFont( parametersTitleFont );
+    parametersTitleLayout->addWidget( parametersTitle, 1 );
+    auto *closeParametersButton = new QPushButton( QStringLiteral( "→" ), parametersTitleBar );
+    closeParametersButton->setFixedSize( 28, 26 );
+    closeParametersButton->setToolTip( tr( "Скрыть параметры" ) );
+    parametersTitleLayout->addWidget( closeParametersButton );
+    voltageDock->setTitleBarWidget( parametersTitleBar );
+    connect( closeParametersButton, &QPushButton::clicked, this, [ this ] {
+        for ( QDockWidget *dock : parameterDocks )
+            dock->hide();
+    } );
+    QAction *analysisAction = spectrumDock->toggleViewAction();
+    analysisAction->setText( QStringLiteral( "Анализ" ) );
+    analysisAction->setIcon( QIcon( iconPath + "analysis.svg" ) );
+    analysisAction->setToolTip( QStringLiteral( "Показать или скрыть существующие FFT-каналы и параметры спектра" ) );
+    ui->toolBar->addAction( analysisAction );
 
     restoreGeometry( dsoSettings->mainWindowGeometry );
-    restoreState( dsoSettings->mainWindowState );
 
     // Central oszilloscope widget
     dsoWidget = new DsoWidget( &dsoSettings->scope, &dsoSettings->view, spec, this );
+    dsoWidget->setFocusPolicy( Qt::StrongFocus );
     setCentralWidget( dsoWidget );
+
+    // The research library is a dockable workspace, while the original scope stays
+    // the central widget and retains the upstream graph layout and interaction.
+    libraryWidget = new ExperimentLibraryWidget( experimentCatalog, experimentManager, this );
+    libraryDock = new QDockWidget( tr( "Библиотека исследований" ), this );
+    libraryDock->setObjectName( QStringLiteral( "researchLibraryDock" ) );
+    libraryDock->setMinimumWidth( 300 );
+    libraryDock->setMaximumWidth( 420 );
+    libraryDock->setFeatures( QDockWidget::DockWidgetClosable | QDockWidget::DockWidgetMovable );
+    libraryDock->setWidget( libraryWidget );
+    addDockWidget( Qt::LeftDockWidgetArea, libraryDock );
+    auto *libraryTitleBar = new QWidget( libraryDock );
+    auto *libraryTitleLayout = new QHBoxLayout( libraryTitleBar );
+    libraryTitleLayout->setContentsMargins( 8, 2, 4, 2 );
+    auto *libraryTitle = new QLabel( tr( "Библиотека исследований" ), libraryTitleBar );
+    QFont libraryTitleFont = libraryTitle->font();
+    libraryTitleFont.setBold( true );
+    libraryTitle->setFont( libraryTitleFont );
+    libraryTitleLayout->addWidget( libraryTitle, 1 );
+    auto *closeLibraryButton = new QPushButton( QStringLiteral( "←" ), libraryTitleBar );
+    closeLibraryButton->setFixedSize( 28, 26 );
+    closeLibraryButton->setToolTip( tr( "Скрыть библиотеку" ) );
+    libraryTitleLayout->addWidget( closeLibraryButton );
+    libraryDock->setTitleBarWidget( libraryTitleBar );
+    connect( closeLibraryButton, &QPushButton::clicked, libraryDock, &QDockWidget::hide );
+    auto *libraryAction = new QAction( tr( "Библиотека" ), this );
+    libraryAction->setCheckable( true );
+    libraryAction->setIcon( QIcon( iconPath + "book.svg" ) );
+    libraryAction->setToolTip( tr( "Открыть библиотеку экспериментов, фотографий, видео и записей сигналов" ) );
+    ui->toolBar->addSeparator();
+    ui->toolBar->addAction( ui->actionSettings );
+    ui->toolBar->addSeparator();
+    auto *parametersAction = new QAction( QIcon( iconPath + "settings.svg" ), tr( "Параметры" ), this );
+    parametersAction->setCheckable( true );
+    parametersAction->setChecked( true );
+    parametersAction->setToolTip( tr( "Показать или скрыть настройки каналов, развёртки, синхронизации и спектра" ) );
+    ui->toolBar->addAction( parametersAction );
+    ui->toolBar->addAction( libraryAction );
+    connect( libraryAction, &QAction::toggled, this, [ this ]( bool visible ) {
+        libraryDock->setVisible( visible );
+        if ( visible && libraryDock->width() < 300 )
+            resizeDocks( { libraryDock }, { 360 }, Qt::Horizontal );
+        updatePanelHandles();
+    } );
+    connect( libraryDock, &QDockWidget::visibilityChanged, libraryAction, &QAction::setChecked );
+    connect( libraryDock, &QDockWidget::visibilityChanged, this, &MainWindow::updatePanelHandles );
+    connect( parametersAction, &QAction::toggled, this, [ this ]( bool visible ) {
+        for ( QDockWidget *dock : parameterDocks )
+            dock->setVisible( visible );
+        if ( visible )
+            resizeDocks( parameterDocks, QList< int >( parameterDocks.size(), 310 ), Qt::Horizontal );
+        updatePanelHandles();
+    } );
+    for ( QDockWidget *dock : parameterDocks )
+        connect( dock, &QDockWidget::visibilityChanged, this, [ this, parametersAction ] {
+            const bool anyVisible = std::any_of( parameterDocks.cbegin(), parameterDocks.cend(),
+                                                 []( QDockWidget *item ) { return !item->isHidden(); } );
+            const QSignalBlocker blocker( parametersAction );
+            parametersAction->setChecked( anyVisible );
+            updatePanelHandles();
+        } );
+    connect( libraryWidget, &ExperimentLibraryWidget::openRecordingRequested, this, &MainWindow::openRecording );
+    connect( libraryWidget, &ExperimentLibraryWidget::activeExperimentChanged, this, [ this ]( const QString &path ) {
+        statusBar()->showMessage( tr( "Активный эксперимент: %1" ).arg( QFileInfo( path ).fileName() ), 5000 );
+    } );
+    connect( experimentCatalog, &ExperimentCatalog::scanFailed, this,
+             [ this ]( const QString &message ) { statusBar()->showMessage( message, 10000 ); } );
+    experimentCatalog->startRescan();
+
+    auto *screenshotAction = new QAction( QIcon( iconPath + "camera.svg" ), tr( "Скриншот" ), this );
+    screenshotAction->setText( tr( "Снимок" ) );
+    screenshotAction->setToolTip( tr( "Сохранить снимок рабочего пространства в активный эксперимент" ) );
+    connect( screenshotAction, &QAction::triggered, this, [ this ] { screenShot( SCREENSHOT, true ); } );
+
+    recordDataAction = new QAction( tr( "Запись данных" ), this );
+    recordDataAction->setCheckable( true );
+    dataRecordIcon = QIcon( iconPath + "exporter.svg" );
+    recordDataAction->setIcon( dataRecordIcon );
+    recordDataAction->setText( tr( "Данные" ) );
+    recordDataAction->setToolTip( tr( "Записывать измерения CH1 и CH2 в формате OHRAW" ) );
+    connect( recordDataAction, &QAction::triggered, this, &MainWindow::toggleDataRecording );
+
+    recordVideoAction = new QAction( tr( "Видео" ), this );
+    recordVideoAction->setCheckable( true );
+    videoRecordIcon = QIcon( iconPath + "camera.svg" );
+    recordVideoAction->setIcon( videoRecordIcon );
+    recordVideoAction->setToolTip( tr( "Снимать окно осциллографа в файл MP4" ) );
+    ui->toolBar->addSeparator();
+    ui->toolBar->addAction( screenshotAction );
+    ui->toolBar->addAction( recordVideoAction );
+    ui->toolBar->addAction( recordDataAction );
+
+    // The horizontal toolbar restores the approved analyzer row. Every item
+    // below is wired to an existing scope control; no placeholder screens are
+    // introduced for analyzer modes that the application does not implement.
+    auto *workspaceToolbar = new QToolBar( tr( "Рабочая область" ), this );
+    workspaceToolbar->setObjectName( QStringLiteral( "workspaceViewToolbar" ) );
+    workspaceToolbar->setMovable( false );
+    workspaceToolbar->setFloatable( false );
+    workspaceToolbar->setToolButtonStyle( Qt::ToolButtonTextBesideIcon );
+    workspaceToolbar->setIconSize( QSize( 20, 20 ) );
+    workspaceToolbar->setStyleSheet( QStringLiteral(
+        "QToolBar#workspaceViewToolbar { background: #eef2f6; border: 0; border-bottom: 1px solid #d6dee8; spacing: 6px; padding: 6px 10px; }"
+        "QToolBar#workspaceViewToolbar QToolButton { background: #ffffff; color: #243247; border: 1px solid #d6dee8; border-radius: 6px; padding: 7px 12px; min-height: 25px; }"
+        "QToolBar#workspaceViewToolbar QToolButton:hover { background: #f7faff; border-color: #9eb9d8; }"
+        "QToolBar#workspaceViewToolbar QToolButton:checked { background: #1677e8; color: #ffffff; border-color: #1677e8; }"
+        "QToolBar#workspaceViewToolbar QToolButton:checked:hover { background: #0868d6; }"
+        "QToolBar#workspaceViewToolbar QToolBar::separator { width: 1px; background: #d6dee8; margin: 4px; }" ) );
+
+    auto stateIcon = []( const QString &normalPath, const QString &activePath ) {
+        QIcon icon;
+        icon.addFile( normalPath, QSize(), QIcon::Normal, QIcon::Off );
+        icon.addFile( activePath, QSize(), QIcon::Normal, QIcon::On );
+        return icon;
+    };
+    auto *scopeViewAction = new QAction( stateIcon( iconPath + "scope.svg", iconPath + "scope-active.svg" ),
+                                         tr( "Осциллограф" ), this );
+    scopeViewAction->setCheckable( true );
+    scopeViewAction->setChecked( true );
+    scopeViewAction->setToolTip( tr( "Перейти к текущему экрану осциллографа" ) );
+    connect( scopeViewAction, &QAction::triggered, this, [ this, scopeViewAction ] {
+        scopeViewAction->setChecked( true );
+        dsoWidget->show();
+        dsoWidget->setFocus( Qt::OtherFocusReason );
+    } );
+    auto *spectrumViewAction = new QAction( stateIcon( iconPath + "spectrum.svg", iconPath + "spectrum-active.svg" ),
+                                            tr( "Спектр" ), this );
+    spectrumViewAction->setCheckable( true );
+    spectrumViewAction->setChecked( std::any_of( scope->spectrum.cbegin(), scope->spectrum.cend(),
+                                                 []( const DsoSettingsScopeChannel &channel ) { return channel.used; } ) );
+    spectrumViewAction->setToolTip( tr( "Показать или скрыть все спектральные трассы FFT" ) );
+    connect( spectrumViewAction, &QAction::toggled, this, [ spectrumDock, scope ]( bool enabled ) {
+        for ( ChannelID channel = 0; channel < scope->spectrum.size(); ++channel )
+            spectrumDock->setUsed( channel, enabled );
+    } );
+    connect( spectrumDock, &SpectrumDock::usedChannelChanged, this, [ spectrumViewAction, scope ] {
+        const bool anySpectrumVisible = std::any_of( scope->spectrum.cbegin(), scope->spectrum.cend(),
+                                                      []( const DsoSettingsScopeChannel &channel ) { return channel.used; } );
+        const QSignalBlocker blocker( spectrumViewAction );
+        spectrumViewAction->setChecked( anySpectrumVisible );
+    } );
+    ui->actionHistogram->setText( tr( "Гистограмма" ) );
+    ui->actionHistogram->setIcon( stateIcon( iconPath + "histogram.svg", iconPath + "histogram-active.svg" ) );
+    ui->actionMeasure->setText( tr( "Измерения" ) );
+    ui->actionMeasure->setIcon( stateIcon( iconPath + "measure.svg", iconPath + "measure-active.svg" ) );
+
+    workspaceToolbar->addAction( scopeViewAction );
+    workspaceToolbar->addAction( spectrumViewAction );
+    workspaceToolbar->addAction( ui->actionHistogram );
+    workspaceToolbar->addAction( ui->actionMeasure );
+    auto *toolbarSpacer = new QWidget( workspaceToolbar );
+    toolbarSpacer->setSizePolicy( QSizePolicy::Expanding, QSizePolicy::Preferred );
+    workspaceToolbar->addWidget( toolbarSpacer );
+    workspaceToolbar->addAction( screenshotAction );
+    addToolBar( Qt::TopToolBarArea, workspaceToolbar );
+
+    auto *analysisMenu = ui->menubar->addMenu( tr( "Анализ" ) );
+    analysisMenu->addAction( spectrumViewAction );
+    analysisMenu->addAction( ui->actionHistogram );
+    analysisMenu->addAction( ui->actionMeasure );
+    analysisMenu->addAction( analysisAction );
+    auto *toolsMenu = ui->menubar->addMenu( tr( "Инструменты" ) );
+    toolsMenu->addAction( parametersAction );
+    toolsMenu->addAction( libraryAction );
+    toolsMenu->addAction( screenshotAction );
+    toolsMenu->addAction( recordVideoAction );
+    toolsMenu->addAction( recordDataAction );
+
+    libraryRevealButton = new QToolButton( this );
+    libraryRevealButton->setText( QStringLiteral( "→" ) );
+    libraryRevealButton->setFixedSize( 24, 44 );
+    libraryRevealButton->setAutoRaise( false );
+    libraryRevealButton->setToolTip( tr( "Открыть библиотеку исследований" ) );
+    libraryRevealButton->setStyleSheet( QStringLiteral(
+        "QToolButton { background: #ffffff; color: #243247; border: 1px solid #cbd5e1; border-radius: 0 6px 6px 0; font-size: 18px; }"
+        "QToolButton:hover { background: #eaf3ff; }" ) );
+    connect( libraryRevealButton, &QToolButton::clicked, libraryAction, &QAction::trigger );
+
+    parameterRevealButton = new QToolButton( this );
+    parameterRevealButton->setText( QStringLiteral( "←" ) );
+    parameterRevealButton->setFixedSize( 24, 44 );
+    parameterRevealButton->setAutoRaise( false );
+    parameterRevealButton->setToolTip( tr( "Открыть панель параметров" ) );
+    parameterRevealButton->setStyleSheet( QStringLiteral(
+        "QToolButton { background: #ffffff; color: #243247; border: 1px solid #cbd5e1; border-radius: 6px 0 0 6px; font-size: 18px; }"
+        "QToolButton:hover { background: #eaf3ff; }" ) );
+    connect( parameterRevealButton, &QToolButton::clicked, parametersAction, &QAction::trigger );
+    QByteArray savedWorkspaceState = QSettings().value( QStringLiteral( "laboratory/mainWindowState" ) ).toByteArray();
+    if ( savedWorkspaceState.isEmpty() )
+        savedWorkspaceState = dsoSettings->mainWindowState;
+    const bool restoredWorkspace = restoreState( savedWorkspaceState, 3 );
+    if ( !restoredWorkspace ) {
+        // The approved layout starts with a wide central scope and a closed
+        // left library drawer. Dock proportions and visibility are persisted.
+        libraryDock->hide();
+        QTimer::singleShot( 0, this, [ this ] {
+            resizeDocks( { libraryDock }, { 360 }, Qt::Horizontal );
+            resizeDocks( parameterDocks, QList< int >( parameterDocks.size(), 310 ), Qt::Horizontal );
+            updatePanelHandles();
+        } );
+    }
+    libraryAction->setChecked( !libraryDock->isHidden() );
+    parametersAction->setChecked( std::any_of( parameterDocks.cbegin(), parameterDocks.cend(),
+                                               []( QDockWidget *dock ) { return !dock->isHidden(); } ) );
+    updatePanelHandles();
+    recordVideoAction->setEnabled( Mp4VideoRecorder::isSupported() );
+    if ( !Mp4VideoRecorder::isSupported() )
+        recordVideoAction->setText( tr( "Нет видео" ) );
+    connect( recordVideoAction, &QAction::triggered, this, &MainWindow::toggleVideoRecording );
+    videoFrameTimer = new QTimer( this );
+    connect( videoFrameTimer, &QTimer::timeout, this, &MainWindow::appendVideoFrame );
+
+    connect( rawRecorder, &RawRecordingEngine::recordingFinished, this,
+             [ this ]( const QString &path, quint64 frames, quint64 dropped ) {
+                 recordDataAction->setChecked( false );
+                 recordDataAction->setEnabled( true );
+                 recordDataAction->setText( tr( "Данные" ) );
+                 recordDataAction->setIcon( dataRecordIcon );
+                 QString error;
+                 if ( !this->experimentManager->registerDataFile( path, &error ) )
+                     statusBar()->showMessage( tr( "Файл записан, ошибка регистрации в библиотеке: %1" ).arg( error ), 12000 );
+                 else
+                     statusBar()->showMessage( tr( "OHRAW записан: %1 блоков; пропущено: %2" ).arg( frames ).arg( dropped ), 8000 );
+                 this->experimentCatalog->startRescan();
+                 if ( closingAfterRecording )
+                     QTimer::singleShot( 0, this, &QWidget::close );
+             } );
+    connect( rawRecorder, &RawRecordingEngine::recordingFailed, this, [ this ]( const QString &message ) {
+        recordDataAction->setChecked( false );
+        recordDataAction->setEnabled( true );
+        recordDataAction->setText( tr( "Данные" ) );
+        recordDataAction->setIcon( dataRecordIcon );
+        QMessageBox::critical( this, tr( "Запись измерений" ), message );
+        if ( closingAfterRecording )
+            QTimer::singleShot( 0, this, &QWidget::close );
+    } );
+    connect( rawRecorder, &RawRecordingEngine::recordingStarted, this,
+             [ this ]( const QString &path ) { statusBar()->showMessage( tr( "Запись CH1/CH2: %1" ).arg( path ) ); } );
+    connect( rawRecorder, &RawRecordingEngine::droppedBlocksChanged, this,
+             [ this ]( quint64 count ) { statusBar()->showMessage( tr( "Предупреждение: пропущено блоков записи: %1" ).arg( count ) ); } );
 
     deviceCommandWidgets = { voltageDock, horizontalDock, triggerDock, spectrumDock, dsoWidget };
     deviceCommandActions = { ui->actionOpen, ui->actionSampling, ui->actionRefresh, ui->actionCalibrateOffset,
@@ -381,11 +754,11 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
         QSignalBlocker blocker( ui->actionSampling );
         if ( enabled ) {
             ui->actionSampling->setIcon( iconPause );
-            ui->actionSampling->setText( tr( "Stop" ) );
+            ui->actionSampling->setText( tr( "Стоп" ) );
             ui->actionSampling->setStatusTip( tr( "Stop the oscilloscope" ) );
         } else {
             ui->actionSampling->setIcon( iconPlay );
-            ui->actionSampling->setText( tr( "Start" ) );
+            ui->actionSampling->setText( tr( "Пуск" ) );
             ui->actionSampling->setStatusTip( tr( "Start the oscilloscope" ) );
         }
         ui->actionSampling->setChecked( enabled );
@@ -412,7 +785,7 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
         if ( !configFileName.isEmpty() ) {
             dsoSettings->loadFromFile( configFileName );
             restoreGeometry( dsoSettings->mainWindowGeometry );
-            restoreState( dsoSettings->mainWindowState );
+            restoreState( dsoSettings->mainWindowState, 3 );
 
             emit settingsLoaded( &dsoSettings->scope, spec );
 
@@ -427,7 +800,7 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
 
     connect( ui->actionSave, &QAction::triggered, this, [ this ]() {
         dsoSettings->mainWindowGeometry = saveGeometry();
-        dsoSettings->mainWindowState = saveState();
+        dsoSettings->mainWindowState = saveState( 3 );
         dsoSettings->save();
     } );
 
@@ -439,7 +812,7 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
         if ( !configFileName.endsWith( ".conf" ) )
             configFileName.append( ".conf" );
         dsoSettings->mainWindowGeometry = saveGeometry();
-        dsoSettings->mainWindowState = saveState();
+        dsoSettings->mainWindowState = saveState( 3 );
         dsoSettings->saveToFile( configFileName );
     } );
 
@@ -447,7 +820,7 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
 
     connect( ui->actionSettings, &QAction::triggered, this, [ this ]() {
         dsoSettings->mainWindowGeometry = saveGeometry();
-        dsoSettings->mainWindowState = saveState();
+        dsoSettings->mainWindowState = saveState( 3 );
 
         DsoConfigDialog *configDialog = new DsoConfigDialog( dsoSettings, this );
         configDialog->setModal( true );
@@ -554,6 +927,196 @@ MainWindow::~MainWindow() {
     delete ui;
 }
 
+void MainWindow::toggleDataRecording() {
+    if ( recordDataAction->isChecked() ) {
+        if ( !ui->actionSampling->isChecked() ) {
+            recordDataAction->setChecked( false );
+            QMessageBox::information( this, tr( "Запись измерений" ),
+                                      tr( "Сначала запустите непрерывный захват осциллографа." ) );
+            return;
+        }
+        QString error;
+        const QString path = experimentManager->nextRawDataPath( &error );
+        if ( path.isEmpty() || !rawRecorder->start( path, &error ) ) {
+            recordDataAction->setChecked( false );
+            QMessageBox::critical( this, tr( "Запись измерений" ), error.isEmpty() ? tr( "Не удалось начать запись." ) : error );
+            return;
+        }
+        recordDataAction->setText( tr( "Стоп данных" ) );
+        recordDataAction->setToolTip( tr( "Остановить запись измерений CH1/CH2" ) );
+        recordDataAction->setIcon( style()->standardIcon( QStyle::SP_MediaStop ) );
+        return;
+    }
+    if ( rawRecorder->isRecording() ) {
+        rawRecorder->stop();
+        recordDataAction->setEnabled( false );
+        recordDataAction->setText( tr( "Завершение записи…" ) );
+    }
+}
+
+void MainWindow::toggleVideoRecording() {
+    if ( recordVideoAction->isChecked() ) {
+        QDialog settingsDialog( this );
+        settingsDialog.setWindowTitle( tr( "Параметры записи видео" ) );
+        auto *layout = new QVBoxLayout( &settingsDialog );
+        auto *size = new QComboBox( &settingsDialog );
+        size->addItem( tr( "Размер окна (%1 × %2)" ).arg( width() ).arg( height() ), QSize( width(), height() ) );
+        size->addItem( QStringLiteral( "1280 × 720" ), QSize( 1280, 720 ) );
+        size->addItem( QStringLiteral( "1920 × 1080" ), QSize( 1920, 1080 ) );
+        const int savedSize = size->findData( QSettings().value( "experiment/videoSize", size->itemData( 0 ) ) );
+        size->setCurrentIndex( savedSize < 0 ? 0 : savedSize );
+        auto *fps = new QComboBox( &settingsDialog );
+        fps->addItem( QStringLiteral( "15 кадр/с" ), 15 );
+        fps->addItem( QStringLiteral( "25 кадр/с" ), 25 );
+        fps->addItem( QStringLiteral( "30 кадр/с" ), 30 );
+        const int savedFps = fps->findData( QSettings().value( "experiment/videoFps", 30 ) );
+        fps->setCurrentIndex( savedFps < 0 ? 2 : savedFps );
+        auto *buttons = new QHBoxLayout;
+        auto *startButton = new QPushButton( tr( "Начать запись" ), &settingsDialog );
+        auto *cancelButton = new QPushButton( tr( "Отмена" ), &settingsDialog );
+        buttons->addStretch( 1 );
+        buttons->addWidget( startButton );
+        buttons->addWidget( cancelButton );
+        layout->addWidget( new QLabel( tr( "Разрешение видео" ), &settingsDialog ) );
+        layout->addWidget( size );
+        layout->addWidget( new QLabel( tr( "Частота кадров" ), &settingsDialog ) );
+        layout->addWidget( fps );
+        layout->addLayout( buttons );
+        connect( startButton, &QPushButton::clicked, &settingsDialog, &QDialog::accept );
+        connect( cancelButton, &QPushButton::clicked, &settingsDialog, &QDialog::reject );
+        if ( settingsDialog.exec() != QDialog::Accepted ) {
+            recordVideoAction->setChecked( false );
+            return;
+        }
+        videoSize = size->currentData().toSize();
+        videoFps = fps->currentData().toInt();
+        QSettings().setValue( "experiment/videoSize", videoSize );
+        QSettings().setValue( "experiment/videoFps", videoFps );
+        QString error;
+        const QString path = experimentManager->nextVideoPath( &error );
+        if ( path.isEmpty() || !videoRecorder->start( path, videoSize, videoFps, &error ) ) {
+            recordVideoAction->setChecked( false );
+            QMessageBox::critical( this, tr( "Запись MP4" ), error.isEmpty() ? tr( "Не удалось начать запись видео." ) : error );
+            return;
+        }
+        videoElapsed.start();
+        videoFrameTimer->start( qMax( 1, 1000 / videoFps ) );
+        recordVideoAction->setText( tr( "Стоп видео" ) );
+        statusBar()->showMessage( tr( "Запись MP4 начата: %1" ).arg( path ) );
+        return;
+    }
+    if ( videoRecorder->isBusy() ) {
+        videoFrameTimer->stop();
+        QString error;
+        if ( !videoRecorder->stop( &error ) ) {
+            QMessageBox::critical( this, tr( "Запись MP4" ), error );
+        } else {
+            const QString path = videoRecorder->filePath();
+            if ( !experimentManager->registerVideo( path, &error ) )
+                statusBar()->showMessage( tr( "Видео записано, но не добавлено в библиотеку: %1" ).arg( error ), 10000 );
+            else
+                statusBar()->showMessage( tr( "Видео сохранено: %1 (%2 с, пропущено кадров: %3)" )
+                                              .arg( path ).arg( videoElapsed.isValid() ? videoElapsed.elapsed() / 1000 : 0 )
+                                              .arg( videoRecorder->droppedFrameCount() ), 8000 );
+            experimentCatalog->startRescan();
+        }
+    }
+    recordVideoAction->setChecked( false );
+    recordVideoAction->setText( tr( "Видео" ) );
+    recordVideoAction->setIcon( videoRecordIcon );
+}
+
+void MainWindow::appendVideoFrame() {
+    if ( !videoRecorder || !videoRecorder->isRecording() ) {
+        videoFrameTimer->stop();
+        if ( videoRecorder && videoRecorder->isBusy() ) {
+            QString error;
+            videoRecorder->stop( &error );
+            recordVideoAction->setChecked( false );
+            recordVideoAction->setText( tr( "Видео" ) );
+            recordVideoAction->setIcon( videoRecordIcon );
+            if ( !error.isEmpty() )
+                QMessageBox::critical( this, tr( "Запись MP4" ), error );
+        }
+        return;
+    }
+    QImage frame = grab().toImage();
+    QString error;
+    if ( !videoRecorder->appendFrame( frame, &error ) ) {
+        videoFrameTimer->stop();
+        QString finalizeError;
+        videoRecorder->stop( &finalizeError );
+        recordVideoAction->setChecked( false );
+        recordVideoAction->setText( tr( "Видео" ) );
+        recordVideoAction->setIcon( videoRecordIcon );
+        QMessageBox::critical( this, tr( "Запись MP4" ), finalizeError.isEmpty() ? error : finalizeError );
+    } else {
+        const qint64 seconds = videoElapsed.elapsed() / 1000;
+        const quint64 dropped = videoRecorder->droppedFrameCount();
+        const QString dropText = dropped ? tr( " · пропущено %1 кадров" ).arg( dropped ) : QString();
+        statusBar()->showMessage( tr( "Запись MP4 · %1 с · %2 кадр/с%3" ).arg( seconds ).arg( videoFps ).arg( dropText ) );
+    }
+}
+
+void MainWindow::openRecording( const QString &path ) {
+    QString error;
+    if ( !rawPlayback->open( path, &error ) ) {
+        QMessageBox::critical( this, tr( "Воспроизведение OHRAW" ), error );
+        return;
+    }
+    resumeSamplingAfterPlayback = ui->actionSampling->isChecked();
+    if ( resumeSamplingAfterPlayback )
+        dsoControl->enableSamplingUI( false );
+
+    auto *dialog = new QDialog( this );
+    dialog->setAttribute( Qt::WA_DeleteOnClose );
+    dialog->setWindowTitle( tr( "Запись сигнала — %1" ).arg( QFileInfo( path ).fileName() ) );
+    dialog->resize( 520, 110 );
+    auto *layout = new QVBoxLayout( dialog );
+    auto *position = new QSlider( Qt::Horizontal, dialog );
+    position->setRange( 0, qMax( 0, rawPlayback->frameCount() - 1 ) );
+    auto *controls = new QHBoxLayout;
+    auto *playPause = new QPushButton( tr( "Воспроизвести" ), dialog );
+    auto *close = new QPushButton( tr( "Закрыть" ), dialog );
+    auto *frameLabel = new QLabel( tr( "0 / %1" ).arg( rawPlayback->frameCount() ), dialog );
+    controls->addWidget( playPause );
+    controls->addWidget( position, 1 );
+    controls->addWidget( frameLabel );
+    controls->addWidget( close );
+    layout->addLayout( controls );
+    connect( playPause, &QPushButton::clicked, dialog, [ this, playPause ] {
+        if ( rawPlayback->isPlaying() ) {
+            rawPlayback->pause();
+            playPause->setText( tr( "Воспроизвести" ) );
+        } else {
+            rawPlayback->play();
+            playPause->setText( tr( "Пауза" ) );
+        }
+    } );
+    connect( close, &QPushButton::clicked, dialog, &QDialog::accept );
+    connect( position, &QSlider::sliderMoved, rawPlayback, &RawPlaybackEngine::seek );
+    connect( rawPlayback, &RawPlaybackEngine::positionChanged, dialog,
+             [ position, frameLabel ]( int frame, int count ) {
+                 const QSignalBlocker blocker( position );
+                 position->setMaximum( qMax( 0, count - 1 ) );
+                 position->setValue( frame );
+                 frameLabel->setText( QStringLiteral( "%1 / %2" ).arg( frame + 1 ).arg( count ) );
+             } );
+    connect( rawPlayback, &RawPlaybackEngine::playbackChanged, playPause,
+             [ playPause ]( bool playing ) { playPause->setText( playing ? tr( "Пауза" ) : tr( "Воспроизвести" ) ); } );
+    connect( rawPlayback, &RawPlaybackEngine::dataGapSkipped, dialog, [ this ]( quint32 blocks ) {
+        statusBar()->showMessage( tr( "В исходной записи пропущено блоков: %1" ).arg( blocks ), 7000 );
+    } );
+    connect( dialog, &QDialog::finished, this, [ this ] {
+        rawPlayback->close();
+        if ( resumeSamplingAfterPlayback )
+            dsoControl->enableSamplingUI( true );
+        resumeSamplingAfterPlayback = false;
+    } );
+    dialog->show();
+    rawPlayback->play();
+}
+
 
 void MainWindow::showNewData( std::shared_ptr< PPresult > newData ) {
     if ( dsoSettings->scope.verboseLevel > 5 )
@@ -587,7 +1150,7 @@ void MainWindow::deviceConnectionStateChanged( DeviceConnectionState state, cons
         QSignalBlocker manualCommandBlocker( ui->actionManualCommand );
         ui->actionSampling->setChecked( false );
         ui->actionSampling->setIcon( iconPlay );
-        ui->actionSampling->setText( tr( "Start" ) );
+        ui->actionSampling->setText( tr( "Пуск" ) );
         ui->actionSampling->setStatusTip( tr( "Oscilloscope unavailable" ) );
         ui->actionCalibrateOffset->setChecked( false );
         ui->actionManualCommand->setChecked( false );
@@ -624,7 +1187,8 @@ void MainWindow::setDeviceCommandUiEnabled( bool enabled ) {
 void MainWindow::screenShot( screenshotType_t screenshotType, bool autoSafe ) {
     if ( dsoSettings->scope.verboseLevel > 2 )
         qDebug() << "  MainWindow::screenShot()" << screenshotType << autoSafe;
-    auto activeWindow = screenshotType == SCREENSHOT ? qApp->activeWindow() : dsoWidget;
+    QWidget *activeWindow = screenshotType == SCREENSHOT ? static_cast< QWidget * >( this )
+                                                         : static_cast< QWidget * >( dsoWidget );
     QPixmap screenshot( activeWindow->size() ); // prepare a pixmap with the correct size
     int sw = screenshot.width();
     int sh = screenshot.height();
@@ -643,6 +1207,15 @@ void MainWindow::screenShot( screenshotType_t screenshotType, bool autoSafe ) {
     QString docName = now.toString( tr( "yyyy-MM-dd hh:mm:ss" ) );
     QString fileName = now.toString( tr( "yyyyMMdd_hhmmss" ) );
     fileName = QDir( lastSaveAsDir ).absoluteFilePath( fileName );
+    if ( autoSafe && screenshotType == SCREENSHOT && experimentManager ) {
+        QString error;
+        const QString experimentPath = experimentManager->nextImagePath( &error );
+        if ( experimentPath.isEmpty() ) {
+            QMessageBox::critical( this, tr( "Скриншот" ), error );
+            return;
+        }
+        fileName = experimentPath;
+    }
     statusBar()->showMessage( docName ); // show date in bottom line
 
     if ( screenshotType != SCREENSHOT && dsoSettings->view.zoom && dsoSettings->view.zoomImage &&
@@ -676,6 +1249,29 @@ void MainWindow::screenShot( screenshotType_t screenshotType, bool autoSafe ) {
             if ( !screenshot.save( fileName ) )
                 QMessageBox::critical( this, QCoreApplication::applicationName(),
                                        tr( "Write error\n%1" ).arg( QFileInfo{ fileName }.absoluteFilePath() ) );
+            else if ( screenshotType == SCREENSHOT && experimentManager ) {
+                QJsonObject metadata;
+                metadata.insert( QStringLiteral( "schema" ), QStringLiteral( "org.openhantek.screenshot/1" ) );
+                metadata.insert( QStringLiteral( "createdAtUtc" ), QDateTime::currentDateTimeUtc().toString( Qt::ISODateWithMs ) );
+                metadata.insert( QStringLiteral( "application" ), QCoreApplication::applicationName() );
+                metadata.insert( QStringLiteral( "applicationVersion" ), QCoreApplication::applicationVersion() );
+                metadata.insert( QStringLiteral( "capture" ), QStringLiteral( "main-window" ) );
+                metadata.insert( QStringLiteral( "width" ), screenshot.width() );
+                metadata.insert( QStringLiteral( "height" ), screenshot.height() );
+                QSaveFile sidecar( QFileInfo( fileName ).dir().filePath( QFileInfo( fileName ).completeBaseName() + ".json" ) );
+                const QByteArray bytes = QJsonDocument( metadata ).toJson( QJsonDocument::Indented );
+                if ( sidecar.open( QIODevice::WriteOnly ) && sidecar.write( bytes ) == bytes.size() && sidecar.commit() ) {
+                    QString error;
+                    if ( !experimentManager->registerImage( fileName, &error ) )
+                        statusBar()->showMessage( tr( "Скриншот сохранён, но не добавлен в библиотеку: %1" ).arg( error ), 10000 );
+                    else
+                        experimentCatalog->startRescan();
+                } else {
+                    QMessageBox::warning( this, tr( "Метаданные скриншота" ),
+                                          tr( "Изображение сохранено, но JSON-метаданные записать не удалось: %1" )
+                                              .arg( sidecar.errorString() ) );
+                }
+            }
             return;
         }
         filters << tr( "Image (*.png *.jpg)" ) << tr( "Portable Document Format (*.pdf)" );
@@ -747,14 +1343,59 @@ bool MainWindow::openDocument( QString docName ) {
 }
 
 
+void MainWindow::resizeEvent( QResizeEvent *event ) {
+    QMainWindow::resizeEvent( event );
+    updatePanelHandles();
+}
+
+
+void MainWindow::updatePanelHandles() {
+    if ( !libraryRevealButton || !parameterRevealButton || !libraryDock )
+        return;
+
+    libraryRevealButton->setVisible( libraryDock->isHidden() );
+    const int railRight = ui->toolBar ? ui->toolBar->geometry().right() : 0;
+    libraryRevealButton->move( railRight + 1, qMax( 0, height() / 2 - libraryRevealButton->height() / 2 ) );
+    libraryRevealButton->raise();
+
+    const bool anyParameterDockVisible = std::any_of( parameterDocks.cbegin(), parameterDocks.cend(),
+                                                       []( QDockWidget *dock ) { return !dock->isHidden(); } );
+    parameterRevealButton->setVisible( !anyParameterDockVisible );
+    parameterRevealButton->move( qMax( 0, width() - parameterRevealButton->width() - 1 ),
+                                 qMax( 0, height() / 2 - parameterRevealButton->height() / 2 ) );
+    parameterRevealButton->raise();
+}
+
+
 /// \brief Save the settings before exiting.
 /// \param event The close event that should be handled.
 void MainWindow::closeEvent( QCloseEvent *event ) {
     if ( dsoSettings->scope.verboseLevel > 2 )
         qDebug() << "  MainWindow::closeEvent()";
+    if ( rawRecorder && rawRecorder->isBusy() ) {
+        event->ignore();
+        closingAfterRecording = true;
+        recordDataAction->setEnabled( false );
+        if ( rawRecorder->isRecording() )
+            rawRecorder->stop();
+        statusBar()->showMessage( tr( "Завершение файла записи перед закрытием…" ) );
+        return;
+    }
+    if ( videoRecorder && videoRecorder->isBusy() ) {
+        videoFrameTimer->stop();
+        QString error;
+        if ( !videoRecorder->stop( &error ) )
+            qWarning() << "Could not finalize MP4 while closing:" << error;
+        else {
+            const QString path = videoRecorder->filePath();
+            experimentManager->registerVideo( path );
+        }
+    }
+    const QByteArray workspaceState = saveState( 3 );
+    QSettings().setValue( QStringLiteral( "laboratory/mainWindowState" ), workspaceState );
     if ( dsoSettings->alwaysSave ) {
         dsoSettings->mainWindowGeometry = saveGeometry();
-        dsoSettings->mainWindowState = saveState();
+        dsoSettings->mainWindowState = workspaceState;
         dsoSettings->save();
     }
     QMainWindow::closeEvent( event );

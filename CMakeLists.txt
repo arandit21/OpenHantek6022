@@ -124,6 +124,12 @@ message( "-- COMPILE_DEFINITIONS: ${CompDefs}" )
 # Qt Widgets based Gui with OpenGL canvas
 add_subdirectory(openhantek)
 
+option(OPENHANTEK_BUILD_STORAGE_TESTS "Build the isolated experiment storage regression test" OFF)
+if (OPENHANTEK_BUILD_STORAGE_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
+endif()
+
 if (WIN32)
     install(
         FILES CHANGELOG LICENSE README

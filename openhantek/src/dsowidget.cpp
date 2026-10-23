@@ -4,11 +4,16 @@
 
 #include <QApplication>
 #include <QFileDialog>
+#include <QFrame>
 #include <QGridLayout>
 #include <QLabel>
 #include <QPainter>
+#include <QPainterPath>
+#include <QPen>
+#include <QPaintEvent>
 #include <QScreen>
 #include <QSignalBlocker>
+#include <QScrollArea>
 #include <QTimer>
 #include <QToolTip>
 #include <QWheelEvent>
@@ -23,6 +28,47 @@
 #include "viewconstants.h"
 #include "widgets/datagrid.h"
 #include "widgets/levelslider.h"
+
+
+namespace {
+/// Draw the trigger summary with a fine stroke around the glyphs themselves.
+/// This keeps the amber text legible on the gray oscilloscope canvas without
+/// adding a label-sized white card behind it.
+class OutlinedScopeLabel final : public QLabel {
+  public:
+    using QLabel::QLabel;
+
+  protected:
+    void paintEvent( QPaintEvent *event ) override {
+        Q_UNUSED( event );
+        if ( text().isEmpty() )
+            return;
+
+        QPainter painter( this );
+        painter.setRenderHint( QPainter::Antialiasing, true );
+        painter.setRenderHint( QPainter::TextAntialiasing, true );
+        const QFontMetricsF metrics( font() );
+        const QRectF bounds = contentsRect();
+        const qreal textWidth = metrics.horizontalAdvance( text() );
+        qreal x = bounds.left() + qMax( 0, indent() );
+        if ( alignment() & Qt::AlignHCenter )
+            x = bounds.center().x() - textWidth / 2.0;
+        else if ( alignment() & Qt::AlignRight )
+            x = bounds.right() - textWidth;
+        const qreal baseline = bounds.top() + ( bounds.height() - metrics.height() ) / 2.0 + metrics.ascent();
+
+        QPainterPath glyphs;
+        glyphs.addText( QPointF( x, baseline ), font(), text() );
+        QPen outline{ QColor( Qt::white ) };
+        outline.setWidthF( 1.0 / devicePixelRatioF() );
+        outline.setJoinStyle( Qt::RoundJoin );
+        painter.strokePath( glyphs, outline );
+        const QColor fill = isEnabled() ? palette().color( QPalette::WindowText )
+                                        : palette().color( QPalette::Disabled, QPalette::WindowText );
+        painter.fillPath( glyphs, fill );
+    }
+};
+} // namespace
 
 
 DsoWidget::DsoWidget( DsoSettingsScope *scope, DsoSettingsView *view, const Dso::ControlSpecification *spec, QWidget *parent )
@@ -74,9 +120,10 @@ DsoWidget::DsoWidget( DsoSettingsScope *scope, DsoSettingsView *view, const Dso:
     } );
 
     // The table for the settings at screen top
-    settingsTriggerLabel = new QLabel();
+    settingsTriggerLabel = new OutlinedScopeLabel();
     settingsTriggerLabel->setMinimumWidth( 320 );
     settingsTriggerLabel->setIndent( 5 );
+    settingsTriggerLabel->setAlignment( Qt::AlignLeft | Qt::AlignVCenter );
     settingsSamplesOnScreen = new QLabel();
     settingsSamplesOnScreen->setPalette( palette );
     settingsSamplerateLabel = new QLabel();
@@ -120,6 +167,9 @@ DsoWidget::DsoWidget( DsoSettingsScope *scope, DsoSettingsView *view, const Dso:
 
     // The table for the measurements at screen bottom
     measurementLayout = new QGridLayout();
+    measurementLayout->setContentsMargins( 4, 3, 4, 3 );
+    measurementLayout->setHorizontalSpacing( 5 );
+    measurementLayout->setVerticalSpacing( 2 );
     measurementLayout->setColumnMinimumWidth( 0, 50 ); // Channel
     measurementLayout->setColumnMinimumWidth( 1, 30 ); // Coupling or Mode
     measurementLayout->setColumnStretch( 2, 3 );       // Voltage amplitude
@@ -181,6 +231,19 @@ DsoWidget::DsoWidget( DsoSettingsScope *scope, DsoSettingsView *view, const Dso:
         measurementLayout->addWidget( measurementTHDLabel[ channel ], int( channel ), col++, Qt::AlignRight );
         measurementLayout->addWidget( measurementFrequencyLabel[ channel ], int( channel ), col++, Qt::AlignRight );
         measurementLayout->addWidget( measurementNoteLabel[ channel ], int( channel ), col++, Qt::AlignLeft );
+        const QString measurementCellStyle = QStringLiteral( "QLabel { padding: 3px 5px; border-right: 1px solid #b7c4d2; }" );
+        measurementMiscLabel[ channel ]->setStyleSheet( measurementCellStyle );
+        measurementGainLabel[ channel ]->setStyleSheet( measurementCellStyle );
+        measurementMagnitudeLabel[ channel ]->setStyleSheet( measurementCellStyle );
+        measurementVppLabel[ channel ]->setStyleSheet( measurementCellStyle );
+        measurementDCLabel[ channel ]->setStyleSheet( measurementCellStyle );
+        measurementACLabel[ channel ]->setStyleSheet( measurementCellStyle );
+        measurementRMSLabel[ channel ]->setStyleSheet( measurementCellStyle );
+        measurementdBLabel[ channel ]->setStyleSheet( measurementCellStyle );
+        measurementRMSPowerLabel[ channel ]->setStyleSheet( measurementCellStyle );
+        measurementTHDLabel[ channel ]->setStyleSheet( measurementCellStyle );
+        measurementFrequencyLabel[ channel ]->setStyleSheet( measurementCellStyle );
+        measurementNoteLabel[ channel ]->setStyleSheet( measurementCellStyle );
         if ( channel < spec->channels )
             updateVoltageCoupling( channel );
         else
@@ -255,10 +318,24 @@ DsoWidget::DsoWidget( DsoSettingsScope *scope, DsoSettingsView *view, const Dso:
     ++row; // = 10
     mainLayout->setRowMinimumHeight( row, zoomSliders.voltageOffsetSlider->postMargin() );
     // end 5x4 box
-    // embedded measurementLayout
+    // Keep the two measurement rows aligned and scrollable when the side panes
+    // leave too little horizontal room for every numeric column.
+    auto *measurementContents = new QWidget( this );
+    measurementContents->setObjectName( QStringLiteral( "measurementTable" ) );
+    measurementContents->setLayout( measurementLayout );
+    auto *measurementScroll = new QScrollArea( this );
+    measurementScroll->setObjectName( QStringLiteral( "measurementTableViewport" ) );
+    measurementScroll->setWidget( measurementContents );
+    measurementScroll->setWidgetResizable( true );
+    measurementScroll->setFrameShape( QFrame::NoFrame );
+    measurementScroll->setHorizontalScrollBarPolicy( Qt::ScrollBarAsNeeded );
+    measurementScroll->setVerticalScrollBarPolicy( Qt::ScrollBarAlwaysOff );
+    measurementScroll->setMaximumHeight( measurementLayout->sizeHint().height() + 8 );
+    measurementScroll->setMinimumHeight( measurementLayout->sizeHint().height() + 4 );
+    // embedded measurements
     const int measurementRow = ++row; // = 11
     // display channel measurements on bottom of scope, full width also with cursor grid (7 columns)
-    mainLayout->addLayout( measurementLayout, measurementRow, 0, 1, -1 );
+    mainLayout->addWidget( measurementScroll, measurementRow, 0, 1, -1 );
     updateCursorGrid( view->cursorsVisible );
 
     // The widget itself

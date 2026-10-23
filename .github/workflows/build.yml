@@ -67,7 +67,7 @@ jobs:
         sudo apt install g++ make cmake fakeroot rpm \
           libfftw3-dev binutils-dev libusb-1.0-0-dev libcups2-dev libxkbcommon-dev \
           libqt6core6t64 libqt6gui6 libqt6widgets6 libqt6printsupport6 \
-          libqt6opengl6 libqt6openglwidgets6 qt6-tools-dev
+          libqt6opengl6 libqt6openglwidgets6 libqt6multimedia6 libqt6multimediawidgets6 qt6-multimedia-dev qt6-tools-dev
 
     - name: Linux amd64 Build
       # GitHub hosts Linux runners on Standard_DS2_v2 virtual machines in Microsoft Azure:
@@ -132,7 +132,7 @@ jobs:
         sudo apt install g++ make cmake fakeroot rpm \
           libfftw3-dev binutils-dev libusb-1.0-0-dev libcups2-dev libxkbcommon-dev \
           libqt6core6t64 libqt6gui6 libqt6widgets6 libqt6printsupport6 \
-          libqt6opengl6 libqt6openglwidgets6 qt6-tools-dev
+          libqt6opengl6 libqt6openglwidgets6 libqt6multimedia6 libqt6multimediawidgets6 qt6-multimedia-dev qt6-tools-dev
 
     - name: Linux arm64 Build
       # GitHub hosts Linux runners on Standard_DS2_v2 virtual machines in Microsoft Azure:
@@ -192,7 +192,7 @@ jobs:
     - name: Install macOS intel Build Requirements
       run: |
         mkdir build
-        brew install qt@6 fftw binutils create-dmg || true
+        brew install qt@6 qtmultimedia fftw binutils create-dmg || true
 
     - name: macOS intel Build
       # GitHub hosts macOS runners in GitHub's own macOS Cloud:
@@ -280,7 +280,7 @@ jobs:
     - name: Install macOS Build Requirements
       run: |
         mkdir build
-        brew install qt@6 fftw binutils create-dmg || true
+        brew install qt@6 qtmultimedia fftw binutils create-dmg || true
 
     - name: macOS arm64 Build
       # GitHub hosts macOS runners in GitHub's own macOS Cloud:
@@ -367,12 +367,21 @@ jobs:
 
     - name: Install Qt for Windows
       uses: jurplel/install-qt-action@v4
+      with:
+        modules: qtmultimedia
 
     - name: Setup Windows MSVC Build
       run:
         md build &
         call "%VCINSTALLDIR%/Auxiliary/Build/vcvars64.bat" &
-        cmake -G "Visual Studio 17 2022" -A x64 -DCMAKE_PREFIX_PATH=%Qt6_DIR% -DCMAKE_BUILD_TYPE=Release -Bbuild
+        cmake -G "Visual Studio 17 2022" -A x64 -DCMAKE_PREFIX_PATH=%Qt6_DIR% -DCMAKE_BUILD_TYPE=Release -DOPENHANTEK_BUILD_STORAGE_TESTS=ON -Bbuild
+
+    - name: Windows storage regression checks
+      shell: pwsh
+      run: |
+        cmake --build build --parallel 8 --config Release --target ExperimentStorageSmoke
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        ctest --test-dir build -C Release --verbose --output-on-failure -R experiment-storage-regression
 
     - name: Windows MSVC Build
       # GitHub hosts Windows runners on Standard_DS2_v2 virtual machines in Microsoft Azure:
@@ -449,6 +458,7 @@ jobs:
           mingw-w64-ucrt-x86_64-gcc
           mingw-w64-ucrt-x86_64-make
           mingw-w64-ucrt-x86_64-qt6-base
+          mingw-w64-ucrt-x86_64-qt6-multimedia
           mingw-w64-ucrt-x86_64-qt6-tools
           mingw-w64-ucrt-x86_64-qt6-declarative
           mingw-w64-ucrt-x86_64-fftw
