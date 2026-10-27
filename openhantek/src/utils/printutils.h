@@ -19,6 +19,9 @@ enum Unit { UNIT_NONE, UNIT_VOLTS, UNIT_DECIBEL, UNIT_SECONDS, UNIT_HERTZ, UNIT_
 /// \return String with the value and unit.
 QString valueToString( double value, Unit unit, int precision = -1 );
 
+/// Same upstream number/unit formatting, with original English SI units (scope view only).
+QString valueToStringEnglish( double value, Unit unit, int precision = -1 );
+
 /// \brief Converts string containing value and (prefix+)unit to double
 /// (Counterpart to valueToString).
 /// \param text The text containing the value and its unit.

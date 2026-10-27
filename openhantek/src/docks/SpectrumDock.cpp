@@ -2,6 +2,7 @@
 
 #include <QCheckBox>
 #include <QCloseEvent>
+#include <QEvent>
 #include <QComboBox>
 #include <QDebug>
 #include <QDockWidget>
@@ -108,6 +109,18 @@ void SpectrumDock::loadSettings( DsoSettingsScope *scope ) {
 
 /// \brief Don't close the dock, just hide it
 /// \param event The close event that should be handled.
+void SpectrumDock::changeEvent( QEvent *event ) {
+    QDockWidget::changeEvent( event );
+    if ( event->type() != QEvent::LanguageChange || !frequencybaseLabel ) return;
+    setWindowTitle( tr( "Spectrum" ) );
+    frequencybaseLabel->setText( tr( "Frequencybase" ) );
+    if ( scope->toolTipVisible ) {
+        frequencybaseSiSpinBox->setToolTip( tr( "Frequency range per horizontal screen division" ) );
+        for ( const auto &channel : channelBlocks )
+            channel.magnitudeComboBox->setToolTip( tr( "Magnitude per vertical screen division" ) );
+    }
+}
+
 void SpectrumDock::closeEvent( QCloseEvent *event ) {
     hide();
     event->accept();

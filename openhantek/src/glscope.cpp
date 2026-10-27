@@ -354,10 +354,11 @@ void GlScope::initializeGL() {
           #version 100
           attribute highp vec3 vertex;
           uniform mat4 matrix;
+          uniform float pointSize;
           void main()
           {
               gl_Position = matrix * vec4(vertex, 1.0);
-              gl_PointSize = 1.0;
+              gl_PointSize = pointSize;
           }
     )";
 
@@ -365,10 +366,11 @@ void GlScope::initializeGL() {
           #version 120
           attribute highp vec3 vertex;
           uniform mat4 matrix;
+          uniform float pointSize;
           void main()
           {
               gl_Position = matrix * vec4(vertex, 1.0);
-              gl_PointSize = 1.0;
+              gl_PointSize = pointSize;
           }
     )";
 
@@ -376,10 +378,11 @@ void GlScope::initializeGL() {
           #version 150
           in highp vec3 vertex;
           uniform mat4 matrix;
+          uniform float pointSize;
           void main()
           {
               gl_Position = matrix * vec4(vertex, 1.0);
-              gl_PointSize = 1.0;
+              gl_PointSize = pointSize;
           }
     )";
 
@@ -443,8 +446,9 @@ void GlScope::initializeGL() {
     vertexLocation = program->attributeLocation( "vertex" );
     matrixLocation = program->uniformLocation( "matrix" );
     colorLocation = program->uniformLocation( "color" );
+    pointSizeLocation = program->uniformLocation( "pointSize" );
 
-    if ( vertexLocation == -1 || colorLocation == -1 || matrixLocation == -1 ) {
+    if ( vertexLocation == -1 || colorLocation == -1 || matrixLocation == -1 || pointSizeLocation == -1 ) {
         qWarning() << tr( "Failed to locate shader variable." );
         return;
     }
@@ -806,6 +810,7 @@ void GlScope::drawGrid() {
     auto *gl = context()->functions();
 
     gl->glLineWidth( 1 );
+    m_program->setUniformValue( pointSizeLocation, 1.0f );
 
     int item = 3;
     // Trigger level (draw this on top of the other items)
@@ -885,6 +890,10 @@ void GlScope::drawVoltageChannelGraph( ChannelID channel, Graph &graph, int hist
 
     QOpenGLVertexArrayObject::Binder b( v.first );
     const GLenum dMode = ( view->interpolation == Dso::INTERPOLATION_OFF ) ? GL_POINTS : GL_LINE_STRIP;
+    // OpenGL line/point widths are framebuffer pixels (physical pixels on HiDPI).
+    // Keep the grid at 1 px while making the voltage traces easier to read.
+    context()->functions()->glLineWidth( 1.9f );
+    m_program->setUniformValue( pointSizeLocation, 2.0f );
     context()->functions()->glDrawArrays( dMode, 0, v.second );
 }
 
@@ -911,5 +920,7 @@ void GlScope::drawSpectrumChannelGraph( ChannelID channel, Graph &graph, int his
 
     QOpenGLVertexArrayObject::Binder b( v.first );
     const GLenum dMode = ( view->interpolation == Dso::INTERPOLATION_OFF ) ? GL_POINTS : GL_LINE_STRIP;
+    context()->functions()->glLineWidth( 1.6f );
+    m_program->setUniformValue( pointSizeLocation, 1.6f );
     context()->functions()->glDrawArrays( dMode, 0, v.second );
 }

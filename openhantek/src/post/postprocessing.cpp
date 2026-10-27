@@ -2,8 +2,6 @@
 
 #include "postprocessing.h"
 
-#include <utility>
-
 PostProcessing::PostProcessing( ChannelID channelCount, int verboseLevel )
     : channelCount( channelCount ), verboseLevel( verboseLevel ) {
     qRegisterMetaType< std::shared_ptr< PPresult > >();
@@ -11,8 +9,6 @@ PostProcessing::PostProcessing( ChannelID channelCount, int verboseLevel )
 
 
 void PostProcessing::registerProcessor( Processor *processor ) { processors.push_back( processor ); }
-
-void PostProcessing::registerPlaybackProcessor( Processor *processor ) { playbackProcessors.push_back( processor ); }
 
 
 // static
@@ -59,15 +55,4 @@ void PostProcessing::input( const DSOsamples *data ) {
         std::shared_ptr< PPresult > res = std::move( currentData );
         emit processingFinished( res );
     }
-}
-
-void PostProcessing::inputPlayback( std::shared_ptr< PPresult > data, quint64 sequence ) {
-    if ( !data || !processing ) {
-        emit playbackFrameProcessed( sequence );
-        return;
-    }
-    for ( Processor *processor : playbackProcessors )
-        processor->process( data.get() );
-    emit playbackProcessingFinished( std::move( data ) );
-    emit playbackFrameProcessed( sequence );
 }

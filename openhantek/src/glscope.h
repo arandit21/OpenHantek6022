@@ -135,5 +135,6 @@ class GlScope : public QOpenGLWidget {
     int colorLocation;
     int vertexLocation;
     int matrixLocation;
+    int pointSizeLocation;
     int selectionLocation;
 };

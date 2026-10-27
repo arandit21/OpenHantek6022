@@ -2,6 +2,7 @@
 
 #include <QCheckBox>
 #include <QCloseEvent>
+#include <QEvent>
 #include <QComboBox>
 #include <QDebug>
 #include <QDockWidget>
@@ -27,8 +28,8 @@ TriggerDock::TriggerDock( DsoSettingsScope *scope, const Dso::ControlSpecificati
 
     // Initialize lists for comboboxes
     for ( ChannelID channel = 0; channel < mSpec->channels; ++channel )
-        sourceStandardStrings << tr( "CH%1" ).arg( channel + 1 );
-    sourceStandardStrings << tr( "MATH" );
+        sourceStandardStrings << QStringLiteral( "CH%1" ).arg( channel + 1 );
+    sourceStandardStrings << QStringLiteral( "MATH" );
     // add "smooth" source
     smoothStandardStrings << tr( "HF" ) << tr( "Normal" ) << tr( "LF" );
 
@@ -126,6 +127,37 @@ void TriggerDock::timebaseChanged( double timebase ) { // provide ROLL mode only
 
 /// \brief Don't close the dock, just hide it
 /// \param event The close event that should be handled.
+void TriggerDock::changeEvent( QEvent *event ) {
+    QDockWidget::changeEvent( event );
+    if ( event->type() != QEvent::LanguageChange || !modeLabel ) return;
+    setWindowTitle( tr( "Trigger" ) );
+    modeLabel->setText( tr( "Mode" ) );
+    sourceLabel->setText( tr( "Source" ) );
+    slopeLabel->setText( tr( "Slope" ) );
+    if ( scope->toolTipVisible ) {
+        modeComboBox->setToolTip( tr( "Select the trigger mode" ) );
+        slopeComboBox->setToolTip( tr( "Select positive, negative or both (alternating) slopes" ) );
+        sourceComboBox->setToolTip( tr( "Select the trigger channel (CH1, CH2, or MATH)" ) );
+        smoothComboBox->setToolTip( tr( "Trigger on fast, normal, or slow signals" ) );
+    }
+    const QSignalBlocker blockMode( modeComboBox );
+    const QSignalBlocker blockSource( sourceComboBox );
+    const QSignalBlocker blockSlope( slopeComboBox );
+    const QSignalBlocker blockSmooth( smoothComboBox );
+    int index = 0;
+    for ( Dso::TriggerMode mode : mSpec->triggerModes )
+        modeComboBox->setItemText( index++, Dso::triggerModeString( mode ) );
+    index = 0;
+    for ( Dso::Slope slope : Dso::SlopeEnum )
+        slopeComboBox->setItemText( index++, Dso::slopeString( slope ) );
+    for ( index = 0; index < int( mSpec->channels ); ++index )
+        sourceComboBox->setItemText( index, QStringLiteral( "CH%1" ).arg( index + 1 ) );
+    sourceComboBox->setItemText( index, QStringLiteral( "MATH" ) );
+    smoothComboBox->setItemText( 0, tr( "HF" ) );
+    smoothComboBox->setItemText( 1, tr( "Normal" ) );
+    smoothComboBox->setItemText( 2, tr( "LF" ) );
+}
+
 void TriggerDock::closeEvent( QCloseEvent *event ) {
     hide();
 

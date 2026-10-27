@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <QCloseEvent>
+#include <QEvent>
 #include <QDebug>
 #include <QDockWidget>
 #include <QSignalBlocker>
@@ -50,9 +51,9 @@ VoltageDock::VoltageDock( DsoSettingsScope *scope, const Dso::ControlSpecificati
         ChannelBlock b;
 
         if ( channel < spec->channels )
-            b.usedCheckBox = new QCheckBox( tr( "CH&%1" ).arg( channel + 1 ) ); // define shortcut <ALT>1 / <ALT>2
+            b.usedCheckBox = new QCheckBox( QStringLiteral( "CH&%1" ).arg( channel + 1 ) ); // define shortcut <ALT>1 / <ALT>2
         else
-            b.usedCheckBox = new QCheckBox( tr( "MA&TH" ) );
+            b.usedCheckBox = new QCheckBox( QStringLiteral( "MA&TH" ) );
         b.miscComboBox = new QComboBox();
         b.gainComboBox = new QComboBox();
         if ( scope->toolTipVisible )
@@ -175,6 +176,35 @@ void VoltageDock::loadSettings( DsoSettingsScope *scope, const Dso::ControlSpeci
 
 /// \brief Don't close the dock, just hide it
 /// \param event The close event that should be handled.
+void VoltageDock::changeEvent( QEvent *event ) {
+    QDockWidget::changeEvent( event );
+    if ( event->type() != QEvent::LanguageChange || channelBlocks.empty() ) return;
+    setWindowTitle( tr( "Voltage" ) );
+    for ( size_t i = 0; i < channelBlocks.size(); ++i ) {
+        const auto &b = channelBlocks[ i ];
+        b.usedCheckBox->setText( i < spec->channels ? QStringLiteral( "CH&%1" ).arg( i + 1 ) : QStringLiteral( "MA&TH" ) );
+        b.invertCheckBox->setText( tr( "Invert" ) );
+        b.attnSpinBox->setPrefix( tr( "x" ) );
+        if ( scope->toolTipVisible ) {
+            b.gainComboBox->setToolTip( tr( "Voltage range per vertical screen division" ) );
+            b.attnSpinBox->setToolTip( tr( "Set probe attenuation, scroll or type a value to select" ) );
+            b.miscComboBox->setToolTip( i < spec->channels ? tr( "Select DC or AC coupling" )
+                                                        : tr( "Select the mathematical operation for this channel" ) );
+        }
+        const QSignalBlocker blockMisc( b.miscComboBox );
+        if ( i < spec->channels ) {
+            int idx = 0;
+            for ( Dso::Coupling c : spec->couplings )
+                if ( c == Dso::Coupling::DC || scope->hasACcoupling || scope->hasACmodification )
+                    b.miscComboBox->setItemText( idx++, Dso::couplingString( c ) );
+        } else {
+            int idx = 0;
+            for ( auto mode : Dso::MathModeEnum )
+                b.miscComboBox->setItemText( idx++, Dso::mathModeString( mode ) );
+        }
+    }
+}
+
 void VoltageDock::closeEvent( QCloseEvent *event ) {
     hide();
     event->accept();

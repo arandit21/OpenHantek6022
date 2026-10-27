@@ -9,14 +9,6 @@
         <file>images/lighttheme/play.svg</file>
         <file>images/lighttheme/refresh.svg</file>
         <file>images/lighttheme/zoom.svg</file>
-        <file>images/lighttheme/check.svg</file>
-        <file>images/lighttheme/analysis.svg</file>
-        <file>images/lighttheme/scope.svg</file>
-        <file>images/lighttheme/scope-active.svg</file>
-        <file>images/lighttheme/spectrum.svg</file>
-        <file>images/lighttheme/spectrum-active.svg</file>
-        <file>images/lighttheme/histogram-active.svg</file>
-        <file>images/lighttheme/measure-active.svg</file>
 
         <file>images/darktheme/histogram.svg</file>
         <file>images/darktheme/measure.svg</file>
@@ -40,6 +32,28 @@
         <file>images/lighttheme/save_as.svg</file>
         <file>images/lighttheme/settings.svg</file>
         <file>images/lighttheme/terminal.svg</file>
+
+        <file>images/lighttheme_png/about.png</file>
+        <file>images/lighttheme_png/book.png</file>
+        <file>images/lighttheme_png/camera.png</file>
+        <file>images/lighttheme_png/clone.png</file>
+        <file>images/lighttheme_png/exit.png</file>
+        <file>images/lighttheme_png/exporter.png</file>
+        <file>images/lighttheme_png/histogram.png</file>
+        <file>images/lighttheme_png/measure.png</file>
+        <file>images/lighttheme_png/offset.png</file>
+        <file>images/lighttheme_png/open.png</file>
+        <file>images/lighttheme_png/pause.png</file>
+        <file>images/lighttheme_png/phosphor.png</file>
+        <file>images/lighttheme_png/play.png</file>
+        <file>images/lighttheme_png/print.png</file>
+        <file>images/lighttheme_png/qt.png</file>
+        <file>images/lighttheme_png/refresh.png</file>
+        <file>images/lighttheme_png/save_as.png</file>
+        <file>images/lighttheme_png/save.png</file>
+        <file>images/lighttheme_png/settings.png</file>
+        <file>images/lighttheme_png/terminal.png</file>
+        <file>images/lighttheme_png/zoom.png</file>
 
         <file>images/darktheme/about.svg</file>
         <file>images/darktheme/book.svg</file>

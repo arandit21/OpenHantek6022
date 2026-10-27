@@ -57,6 +57,9 @@ Unit mathModeUnit( MathMode mode );
 
 QString mathModeString( MathMode mode );
 
+/// Original English math-channel caption for the scope view.
+QString mathModeStringEnglish( MathMode mode );
+
 unsigned mathChannelsUsed( MathMode mode );
 
 template < class T > inline MathMode getMathMode( T &t ) { return MathMode( t.couplingOrMathIndex ); }

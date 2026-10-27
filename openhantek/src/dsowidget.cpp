@@ -4,16 +4,14 @@
 
 #include <QApplication>
 #include <QFileDialog>
-#include <QFrame>
+#include <QFontMetricsF>
 #include <QGridLayout>
 #include <QLabel>
 #include <QPainter>
 #include <QPainterPath>
-#include <QPen>
 #include <QPaintEvent>
 #include <QScreen>
 #include <QSignalBlocker>
-#include <QScrollArea>
 #include <QTimer>
 #include <QToolTip>
 #include <QWheelEvent>
@@ -31,10 +29,8 @@
 
 
 namespace {
-/// Draw the trigger summary with a fine stroke around the glyphs themselves.
-/// This keeps the amber text legible on the gray oscilloscope canvas without
-/// adding a label-sized white card behind it.
-class OutlinedScopeLabel final : public QLabel {
+/// Draw the trigger summary as high-contrast italic text.
+class ItalicScopeLabel final : public QLabel {
   public:
     using QLabel::QLabel;
 
@@ -47,7 +43,9 @@ class OutlinedScopeLabel final : public QLabel {
         QPainter painter( this );
         painter.setRenderHint( QPainter::Antialiasing, true );
         painter.setRenderHint( QPainter::TextAntialiasing, true );
-        const QFontMetricsF metrics( font() );
+        QFont labelFont = font();
+        labelFont.setItalic( true );
+        const QFontMetricsF metrics( labelFont );
         const QRectF bounds = contentsRect();
         const qreal textWidth = metrics.horizontalAdvance( text() );
         qreal x = bounds.left() + qMax( 0, indent() );
@@ -58,22 +56,17 @@ class OutlinedScopeLabel final : public QLabel {
         const qreal baseline = bounds.top() + ( bounds.height() - metrics.height() ) / 2.0 + metrics.ascent();
 
         QPainterPath glyphs;
-        glyphs.addText( QPointF( x, baseline ), font(), text() );
-        QPen outline{ QColor( Qt::white ) };
-        outline.setWidthF( 1.0 / devicePixelRatioF() );
-        outline.setJoinStyle( Qt::RoundJoin );
-        painter.strokePath( glyphs, outline );
-        const QColor fill = isEnabled() ? palette().color( QPalette::WindowText )
-                                        : palette().color( QPalette::Disabled, QPalette::WindowText );
-        painter.fillPath( glyphs, fill );
+        glyphs.addText( QPointF( x, baseline ), labelFont, text() );
+        painter.fillPath( glyphs, QColor( 32, 43, 59 ) );
     }
 };
 } // namespace
-
-
 DsoWidget::DsoWidget( DsoSettingsScope *scope, DsoSettingsView *view, const Dso::ControlSpecification *spec, QWidget *parent )
     : QWidget( parent ), scope( scope ), view( view ), spec( spec ), mainScope( GlScope::createNormal( scope, view ) ),
       zoomScope( GlScope::createZoomed( scope, view ) ) {
+
+    // Passive build identifier to verify that the launched EXE contains this scope code.
+    setProperty( "scopeEnglishOnlyBuild", QStringLiteral( "OH_SCOPE_ENGLISH_20261027_V2" ) );
 
     if ( scope->verboseLevel > 1 )
         qDebug() << " DsoWidget::DsoWidget()";
@@ -120,10 +113,9 @@ DsoWidget::DsoWidget( DsoSettingsScope *scope, DsoSettingsView *view, const Dso:
     } );
 
     // The table for the settings at screen top
-    settingsTriggerLabel = new OutlinedScopeLabel();
+    settingsTriggerLabel = new ItalicScopeLabel();
     settingsTriggerLabel->setMinimumWidth( 320 );
     settingsTriggerLabel->setIndent( 5 );
-    settingsTriggerLabel->setAlignment( Qt::AlignLeft | Qt::AlignVCenter );
     settingsSamplesOnScreen = new QLabel();
     settingsSamplesOnScreen->setPalette( palette );
     settingsSamplerateLabel = new QLabel();
@@ -167,9 +159,6 @@ DsoWidget::DsoWidget( DsoSettingsScope *scope, DsoSettingsView *view, const Dso:
 
     // The table for the measurements at screen bottom
     measurementLayout = new QGridLayout();
-    measurementLayout->setContentsMargins( 4, 3, 4, 3 );
-    measurementLayout->setHorizontalSpacing( 5 );
-    measurementLayout->setVerticalSpacing( 2 );
     measurementLayout->setColumnMinimumWidth( 0, 50 ); // Channel
     measurementLayout->setColumnMinimumWidth( 1, 30 ); // Coupling or Mode
     measurementLayout->setColumnStretch( 2, 3 );       // Voltage amplitude
@@ -231,19 +220,6 @@ DsoWidget::DsoWidget( DsoSettingsScope *scope, DsoSettingsView *view, const Dso:
         measurementLayout->addWidget( measurementTHDLabel[ channel ], int( channel ), col++, Qt::AlignRight );
         measurementLayout->addWidget( measurementFrequencyLabel[ channel ], int( channel ), col++, Qt::AlignRight );
         measurementLayout->addWidget( measurementNoteLabel[ channel ], int( channel ), col++, Qt::AlignLeft );
-        const QString measurementCellStyle = QStringLiteral( "QLabel { padding: 3px 5px; border-right: 1px solid #b7c4d2; }" );
-        measurementMiscLabel[ channel ]->setStyleSheet( measurementCellStyle );
-        measurementGainLabel[ channel ]->setStyleSheet( measurementCellStyle );
-        measurementMagnitudeLabel[ channel ]->setStyleSheet( measurementCellStyle );
-        measurementVppLabel[ channel ]->setStyleSheet( measurementCellStyle );
-        measurementDCLabel[ channel ]->setStyleSheet( measurementCellStyle );
-        measurementACLabel[ channel ]->setStyleSheet( measurementCellStyle );
-        measurementRMSLabel[ channel ]->setStyleSheet( measurementCellStyle );
-        measurementdBLabel[ channel ]->setStyleSheet( measurementCellStyle );
-        measurementRMSPowerLabel[ channel ]->setStyleSheet( measurementCellStyle );
-        measurementTHDLabel[ channel ]->setStyleSheet( measurementCellStyle );
-        measurementFrequencyLabel[ channel ]->setStyleSheet( measurementCellStyle );
-        measurementNoteLabel[ channel ]->setStyleSheet( measurementCellStyle );
         if ( channel < spec->channels )
             updateVoltageCoupling( channel );
         else
@@ -257,7 +233,7 @@ DsoWidget::DsoWidget( DsoSettingsScope *scope, DsoSettingsView *view, const Dso:
     cursorDataGrid->setBackgroundColor( view->colors->background );
     cursorDataGrid->setToolTipsVisible( scope->toolTipVisible );
 
-    cursorDataGrid->addItem( tr( "Markers" ), view->colors->text );
+    cursorDataGrid->addItem( QStringLiteral( "Markers" ), view->colors->text );
     for ( ChannelID channel = 0; channel < scope->voltage.size(); ++channel ) {
         cursorDataGrid->addItem( scope->voltage[ channel ].name, view->colors->voltage[ channel ] );
     }
@@ -318,24 +294,10 @@ DsoWidget::DsoWidget( DsoSettingsScope *scope, DsoSettingsView *view, const Dso:
     ++row; // = 10
     mainLayout->setRowMinimumHeight( row, zoomSliders.voltageOffsetSlider->postMargin() );
     // end 5x4 box
-    // Keep the two measurement rows aligned and scrollable when the side panes
-    // leave too little horizontal room for every numeric column.
-    auto *measurementContents = new QWidget( this );
-    measurementContents->setObjectName( QStringLiteral( "measurementTable" ) );
-    measurementContents->setLayout( measurementLayout );
-    auto *measurementScroll = new QScrollArea( this );
-    measurementScroll->setObjectName( QStringLiteral( "measurementTableViewport" ) );
-    measurementScroll->setWidget( measurementContents );
-    measurementScroll->setWidgetResizable( true );
-    measurementScroll->setFrameShape( QFrame::NoFrame );
-    measurementScroll->setHorizontalScrollBarPolicy( Qt::ScrollBarAsNeeded );
-    measurementScroll->setVerticalScrollBarPolicy( Qt::ScrollBarAlwaysOff );
-    measurementScroll->setMaximumHeight( measurementLayout->sizeHint().height() + 8 );
-    measurementScroll->setMinimumHeight( measurementLayout->sizeHint().height() + 4 );
-    // embedded measurements
+    // embedded measurementLayout
     const int measurementRow = ++row; // = 11
     // display channel measurements on bottom of scope, full width also with cursor grid (7 columns)
-    mainLayout->addWidget( measurementScroll, measurementRow, 0, 1, -1 );
+    mainLayout->addLayout( measurementLayout, measurementRow, 0, 1, -1 );
     updateCursorGrid( view->cursorsVisible );
 
     // The widget itself
@@ -528,7 +490,7 @@ void DsoWidget::setupSliders( DsoWidget::Sliders &sliders ) {
     // The offset sliders for all possible channels
     sliders.voltageOffsetSlider = new LevelSlider( Qt::RightArrow );
     if ( scope->toolTipVisible )
-        sliders.voltageOffsetSlider->setToolTip( tr( "Trace position, drag the channel name up or down" ) );
+        sliders.voltageOffsetSlider->setToolTip( QStringLiteral( "Trace position, drag the channel name up or down" ) );
     for ( ChannelID channel = 0; channel < scope->voltage.size(); ++channel ) {
         sliders.voltageOffsetSlider->addSlider( scope->voltage[ channel ].name, int( channel ) );
         sliders.voltageOffsetSlider->setColor( ( channel ), view->colors->voltage[ channel ] );
@@ -550,7 +512,7 @@ void DsoWidget::setupSliders( DsoWidget::Sliders &sliders ) {
     // The triggerPosition slider
     sliders.triggerPositionSlider = new LevelSlider( Qt::DownArrow );
     if ( scope->toolTipVisible )
-        sliders.triggerPositionSlider->setToolTip( tr( "Trigger position, drag the arrow left or right" ) );
+        sliders.triggerPositionSlider->setToolTip( QStringLiteral( "Trigger position, drag the arrow left or right" ) );
     sliders.triggerPositionSlider->addSlider();
     sliders.triggerPositionSlider->setLimits( 0, 0.0, 1.0 );
     sliders.triggerPositionSlider->setStep( 0, 0.2 / double( DIVS_TIME ) );
@@ -560,7 +522,7 @@ void DsoWidget::setupSliders( DsoWidget::Sliders &sliders ) {
     // The sliders for the trigger levels
     sliders.triggerLevelSlider = new LevelSlider( Qt::LeftArrow );
     if ( scope->toolTipVisible )
-        sliders.triggerLevelSlider->setToolTip( tr( "Trigger level, drag the arrow up or down" ) );
+        sliders.triggerLevelSlider->setToolTip( QStringLiteral( "Trigger level, drag the arrow up or down" ) );
     for ( ChannelID channel = 0; channel < scope->voltage.size(); ++channel ) {
         sliders.triggerLevelSlider->addSlider( int( channel ) );
         sliders.triggerLevelSlider->setColor( channel, ( channel == ChannelID( scope->trigger.source ) )
@@ -574,7 +536,7 @@ void DsoWidget::setupSliders( DsoWidget::Sliders &sliders ) {
     // The marker slider
     sliders.markerSlider = new LevelSlider( Qt::UpArrow );
     if ( scope->toolTipVisible )
-        sliders.markerSlider->setToolTip( tr( "Measure or zoom marker '1' and '2', drag left or right" ) );
+        sliders.markerSlider->setToolTip( QStringLiteral( "Measure or zoom marker '1' and '2', drag left or right" ) );
     for ( int marker = 0; marker < 2; ++marker ) {
         sliders.markerSlider->addSlider( QString::number( marker + 1 ), marker );
         sliders.markerSlider->setLimits( marker, MARGIN_LEFT, MARGIN_RIGHT );
@@ -671,11 +633,11 @@ void DsoWidget::updateMarkerDetails() {
             QPointF p1 = scope->voltage[ channel ].cursor.pos[ 1 ];
             if ( scope->voltage[ channel ].cursor.shape != DsoSettingsScopeCursor::NONE ) {
                 cursorDataGrid->updateInfo(
-                    unsigned( index ), true, tr( "ON" ),
-                    valueToString( fabs( p1.x() - p0.x() ) * scope->horizontal.timebase, UNIT_SECONDS, 4 ),
-                    valueToString( fabs( p1.y() - p0.y() ) * scope->gain( channel ), voltageUnits[ channel ], 4 ) );
+                    unsigned( index ), true, QStringLiteral( "ON" ),
+                    valueToStringEnglish( fabs( p1.x() - p0.x() ) * scope->horizontal.timebase, UNIT_SECONDS, 4 ),
+                    valueToStringEnglish( fabs( p1.y() - p0.y() ) * scope->gain( channel ), voltageUnits[ channel ], 4 ) );
             } else {
-                cursorDataGrid->updateInfo( unsigned( index ), true, tr( "OFF" ), "", "" );
+                cursorDataGrid->updateInfo( unsigned( index ), true, QStringLiteral( "OFF" ), "", "" );
             }
         } else {
             cursorDataGrid->updateInfo( unsigned( index ), false );
@@ -689,12 +651,12 @@ void DsoWidget::updateMarkerDetails() {
             QPointF p1 = scope->spectrum[ channel ].cursor.pos[ 1 ];
             if ( scope->spectrum[ channel ].cursor.shape != DsoSettingsScopeCursor::NONE ) {
                 cursorDataGrid->updateInfo(
-                    unsigned( index ), true, tr( "ON" ),
-                    valueToString( fabs( p1.x() - p0.x() ) * scope->horizontal.frequencybase, UNIT_HERTZ, 4 ),
-                    valueToString( fabs( p1.y() - p0.y() ) * scope->spectrum[ channel ].magnitude, UNIT_DECIBEL, 4 ) +
+                    unsigned( index ), true, QStringLiteral( "ON" ),
+                    valueToStringEnglish( fabs( p1.x() - p0.x() ) * scope->horizontal.frequencybase, UNIT_HERTZ, 4 ),
+                    valueToStringEnglish( fabs( p1.y() - p0.y() ) * scope->spectrum[ channel ].magnitude, UNIT_DECIBEL, 4 ) +
                         scope->analysis.dBsuffix() );
             } else {
-                cursorDataGrid->updateInfo( unsigned( index ), true, tr( "OFF" ), "", "" );
+                cursorDataGrid->updateInfo( unsigned( index ), true, QStringLiteral( "OFF" ), "", "" );
             }
         } else {
             cursorDataGrid->updateInfo( unsigned( index ), false );
@@ -715,38 +677,38 @@ void DsoWidget::updateMarkerDetails() {
         markerFrequencyLabel->setVisible( true );
         markerTimebaseLabel->setVisible( view->zoom );
         markerFrequencybaseLabel->setVisible( view->zoom );
-        QString mInfo( tr( "Markers  " ) );
+        QString mInfo( QStringLiteral( "Markers  " ) );
         QString mTime( " t: " );
         QString mFreq( " f: " );
         if ( view->zoom ) {
             if ( divs != 0.0 ) {
                 zoomFactor = DIVS_TIME / divs;
-                mInfo = tr( "Zoom x%1  " ).arg( zoomFactor, -1, 'g', 3 );
+                mInfo = QStringLiteral( "Zoom x%1  " ).arg( zoomFactor, -1, 'g', 3 );
             } else { // avoid div by zero
                 zoomFactor = 1000;
-                mInfo = tr( "Zoom ---  " );
+                mInfo = QStringLiteral( "Zoom ---  " );
             }
-            markerTimebaseLabel->setText( "  " + valueToString( time / DIVS_TIME, UNIT_SECONDS, 3 ) + tr( "/div" ) );
+            markerTimebaseLabel->setText( "  " + valueToStringEnglish( time / DIVS_TIME, UNIT_SECONDS, 3 ) + QStringLiteral( "/div" ) );
             markerTimebaseLabel->setVisible( timeUsed );
-            markerFrequencybaseLabel->setText( "  " + valueToString( freq / DIVS_TIME, UNIT_HERTZ, 3 ) + tr( "/div" ) );
+            markerFrequencybaseLabel->setText( "  " + valueToStringEnglish( freq / DIVS_TIME, UNIT_HERTZ, 3 ) + QStringLiteral( "/div" ) );
             markerFrequencybaseLabel->setVisible( freqUsed );
         }
         markerInfoLabel->setText( mInfo );
         if ( timeUsed ) {
-            mTime += QString( "%1" ).arg( valueToString( time0, UNIT_SECONDS, 3 ) );
+            mTime += QString( "%1" ).arg( valueToStringEnglish( time0, UNIT_SECONDS, 3 ) );
             if ( time > 0 )
                 mTime += QString( " ... %1,  Δt: %2 (%3) " )
-                             .arg( valueToString( time1, UNIT_SECONDS, 3 ), valueToString( time, UNIT_SECONDS, 3 ),
-                                   valueToString( 1 / time, UNIT_HERTZ, 3 ) );
+                             .arg( valueToStringEnglish( time1, UNIT_SECONDS, 3 ), valueToStringEnglish( time, UNIT_SECONDS, 3 ),
+                                   valueToStringEnglish( 1 / time, UNIT_HERTZ, 3 ) );
             markerTimeLabel->setText( mTime );
         } else {
             markerTimeLabel->setText( "" );
         }
         if ( freqUsed ) {
-            mFreq += QString( "%1" ).arg( valueToString( freq0, UNIT_HERTZ, 3 ) );
+            mFreq += QString( "%1" ).arg( valueToStringEnglish( freq0, UNIT_HERTZ, 3 ) );
             if ( freq > 0 )
                 mFreq += QString( " ... %2,  Δf: %3 " )
-                             .arg( valueToString( freq1, UNIT_HERTZ, 3 ), valueToString( freq, UNIT_HERTZ, 3 ) );
+                             .arg( valueToStringEnglish( freq1, UNIT_HERTZ, 3 ), valueToStringEnglish( freq, UNIT_HERTZ, 3 ) );
             markerFrequencyLabel->setText( mFreq );
         } else
             markerFrequencyLabel->setText( "" );
@@ -755,10 +717,10 @@ void DsoWidget::updateMarkerDetails() {
     QString markerMeasureTimeLabel;
     QString markerMeasureFreqLabel;
     if ( timeUsed ) {
-        markerMeasureTimeLabel = QString( "Δt: %1" ).arg( valueToString( time, UNIT_SECONDS, 3 ) );
+        markerMeasureTimeLabel = QString( "Δt: %1" ).arg( valueToStringEnglish( time, UNIT_SECONDS, 3 ) );
     }
     if ( freqUsed ) {
-        markerMeasureFreqLabel = QString( "Δf: %1" ).arg( valueToString( freq, UNIT_HERTZ, 3 ) );
+        markerMeasureFreqLabel = QString( "Δf: %1" ).arg( valueToStringEnglish( freq, UNIT_HERTZ, 3 ) );
     }
     cursorDataGrid->updateInfo( unsigned( 0 ), true, QString(), markerMeasureTimeLabel, markerMeasureFreqLabel );
 }
@@ -768,8 +730,8 @@ void DsoWidget::updateMarkerDetails() {
 void DsoWidget::updateSpectrumDetails( ChannelID channel ) {
     setMeasurementVisible( channel );
     if ( scope->spectrum[ channel ].used )
-        measurementMagnitudeLabel[ channel ]->setText( valueToString( scope->spectrum[ channel ].magnitude, UNIT_DECIBEL, 3 ) +
-                                                       tr( "/div" ) );
+        measurementMagnitudeLabel[ channel ]->setText( valueToStringEnglish( scope->spectrum[ channel ].magnitude, UNIT_DECIBEL, 3 ) +
+                                                       QStringLiteral( "/div" ) );
     else
         measurementMagnitudeLabel[ channel ]->setText( QString() );
 }
@@ -781,23 +743,23 @@ void DsoWidget::updateTriggerDetails() {
     QPalette tablePalette = palette();
     tablePalette.setColor( QPalette::WindowText, view->colors->voltage[ unsigned( scope->trigger.source ) ] );
     settingsTriggerLabel->setPalette( tablePalette );
-    QString levelString = valueToString( scope->voltage[ unsigned( scope->trigger.source ) ].trigger,
+    QString levelString = valueToStringEnglish( scope->voltage[ unsigned( scope->trigger.source ) ].trigger,
                                          voltageUnits[ size_t( scope->trigger.source ) ], 3 );
-    QString pretriggerString = valueToString( scope->trigger.position * scope->horizontal.timebase * DIVS_TIME, UNIT_SECONDS, 3 );
+    QString pretriggerString = valueToStringEnglish( scope->trigger.position * scope->horizontal.timebase * DIVS_TIME, UNIT_SECONDS, 3 );
     QString pre = Dso::slopeString( scope->trigger.slope ); // trigger slope
     QString post = pre;                                     // opposite trigger slope
     if ( scope->trigger.slope == Dso::Slope::Positive )
         post = Dso::slopeString( Dso::Slope::Negative );
     else if ( scope->trigger.slope == Dso::Slope::Negative )
         post = Dso::slopeString( Dso::Slope::Positive );
-    QString pulseWidthString = bool( pulseWidth1 ) ? pre + valueToString( pulseWidth1, UNIT_SECONDS, 3 ) + post : "";
-    pulseWidthString += bool( pulseWidth2 ) ? valueToString( pulseWidth2, UNIT_SECONDS, 3 ) + pre : "";
+    QString pulseWidthString = bool( pulseWidth1 ) ? pre + valueToStringEnglish( pulseWidth1, UNIT_SECONDS, 3 ) + post : "";
+    pulseWidthString += bool( pulseWidth2 ) ? valueToStringEnglish( pulseWidth2, UNIT_SECONDS, 3 ) + pre : "";
     if ( bool( pulseWidth1 ) && bool( pulseWidth2 ) ) {
         int dutyCyle = int( 0.5 + ( 100.0 * pulseWidth1 ) / ( pulseWidth1 + pulseWidth2 ) );
         pulseWidthString += " (" + QString::number( dutyCyle ) + "%)";
     }
     if ( !scope->liveCalibrationActive && scope->trigger.mode != Dso::TriggerMode::ROLL ) {
-        settingsTriggerLabel->setText( tr( "%1  %2  %3  %4  %5" )
+        settingsTriggerLabel->setText( QStringLiteral( "%1  %2  %3  %4  %5" )
                                            .arg( scope->voltage[ unsigned( scope->trigger.source ) ].name,
                                                  Dso::slopeString( scope->trigger.slope ), levelString, pretriggerString,
                                                  pulseWidthString ) );
@@ -815,8 +777,8 @@ void DsoWidget::updateVoltageDetails( ChannelID channel ) {
     setMeasurementVisible( channel );
 
     if ( scope->voltage[ channel ].used )
-        measurementGainLabel[ channel ]->setText( valueToString( scope->gain( channel ), voltageUnits[ channel ], 3 ) +
-                                                  tr( "/div" ) + " " );
+        measurementGainLabel[ channel ]->setText( valueToStringEnglish( scope->gain( channel ), voltageUnits[ channel ], 3 ) +
+                                                  QStringLiteral( "/div" ) + " " );
     else
         measurementGainLabel[ channel ]->setText( QString() );
 }
@@ -825,7 +787,7 @@ void DsoWidget::updateVoltageDetails( ChannelID channel ) {
 /// \brief Handles frequencybaseChanged signal from the horizontal dock.
 /// \param frequencybase The frequencybase used for displaying the trace.
 void DsoWidget::updateFrequencybase( double frequencybase ) {
-    settingsFrequencybaseLabel->setText( valueToString( frequencybase, UNIT_HERTZ, -1 ) + tr( "/div" ) );
+    settingsFrequencybaseLabel->setText( valueToStringEnglish( frequencybase, UNIT_HERTZ, -1 ) + QStringLiteral( "/div" ) );
     updateMarkerDetails();
 }
 
@@ -835,7 +797,7 @@ void DsoWidget::updateFrequencybase( double frequencybase ) {
 void DsoWidget::updateSamplerate( double newSamplerate ) {
     samplerate = newSamplerate;
     scope->horizontal.dotsOnScreen = int( ceil( samplerate * timebase * DIVS_TIME ) );
-    settingsSamplerateLabel->setText( valueToString( samplerate, UNIT_SAMPLES, -1 ) + tr( "/s" ) + " " );
+    settingsSamplerateLabel->setText( valueToStringEnglish( samplerate, UNIT_SAMPLES, -1 ) + QStringLiteral( "/s" ) + " " );
 }
 
 
@@ -843,7 +805,7 @@ void DsoWidget::updateSamplerate( double newSamplerate ) {
 /// \param newOversample The oversampling set in the oscilloscope.
 void DsoWidget::updateOversample( unsigned newOversample ) {
     oversample = newOversample;
-    settingsOversampleLabel->setText( tr( "%1x ovr " ).arg( oversample ) );
+    settingsOversampleLabel->setText( QStringLiteral( "%1x ovr " ).arg( oversample ) );
 }
 
 
@@ -853,7 +815,7 @@ void DsoWidget::updateTimebase( double newTimebase ) {
     timebase = newTimebase;
     scope->horizontal.dotsOnScreen = int( ceil( samplerate * timebase * DIVS_TIME ) );
     // printf( "DsoWidget::updateTimebase( %g ) -> %d\n", timebase, scope->horizontal.dotsOnScreen );
-    settingsTimebaseLabel->setText( valueToString( timebase, UNIT_SECONDS, -1 ) + tr( "/div" ) + " " );
+    settingsTimebaseLabel->setText( valueToStringEnglish( timebase, UNIT_SECONDS, -1 ) + QStringLiteral( "/div" ) + " " );
     updateMarkerDetails();
 }
 
@@ -923,14 +885,25 @@ void DsoWidget::updateTriggerSource() {
 void DsoWidget::updateVoltageCoupling( ChannelID channel ) {
     if ( channel >= scope->voltage.size() )
         return;
-    measurementMiscLabel[ channel ]->setText( Dso::couplingString( scope->coupling( channel, spec ) ) );
+    // Original oscilloscope abbreviations; deliberately independent of GUI language.
+    switch ( scope->coupling( channel, spec ) ) {
+    case Dso::Coupling::AC:
+        measurementMiscLabel[ channel ]->setText( QStringLiteral( "AC" ) );
+        break;
+    case Dso::Coupling::DC:
+        measurementMiscLabel[ channel ]->setText( QStringLiteral( "DC" ) );
+        break;
+    case Dso::Coupling::GND:
+        measurementMiscLabel[ channel ]->setText( QStringLiteral( "GND" ) );
+        break;
+    }
 }
 
 
 /// \brief Handles modeChanged signal from the voltage dock.
 void DsoWidget::updateMathMode() {
     ChannelID mathChannel = spec->channels;
-    measurementMiscLabel[ mathChannel ]->setText( Dso::mathModeString( Dso::getMathMode( scope->voltage[ mathChannel ] ) ) );
+    measurementMiscLabel[ mathChannel ]->setText( Dso::mathModeStringEnglish( Dso::getMathMode( scope->voltage[ mathChannel ] ) ) );
     voltageUnits[ mathChannel ] = Dso::mathModeUnit( Dso::getMathMode( scope->voltage[ mathChannel ] ) );
     updateMarkerDetails();
 }
@@ -974,7 +947,7 @@ void DsoWidget::updateVoltageUsed( ChannelID channel, bool used ) {
 
 /// \brief Change the record length.
 void DsoWidget::updateRecordLength( int size ) {
-    settingsSamplesOnScreen->setText( valueToString( double( size ), UNIT_SAMPLES, -1 ) + " " + tr( "on screen" ) + " " );
+    settingsSamplesOnScreen->setText( valueToStringEnglish( double( size ), UNIT_SAMPLES, -1 ) + " " + QStringLiteral( "on screen" ) + " " );
 }
 
 
@@ -1031,7 +1004,7 @@ void DsoWidget::showNew( std::shared_ptr< PPresult > analysedData ) {
 
     QPalette triggerLabelPalette = palette();
     if ( scope->liveCalibrationActive ) {
-        swTriggerStatus->setText( tr( "<b> OFFSET CALIBRATION </b>" ) );
+        swTriggerStatus->setText( QStringLiteral( "<b> OFFSET CALIBRATION </b>" ) );
         triggerLabelPalette.setColor( QPalette::WindowText, Qt::black );
         triggerLabelPalette.setColor( QPalette::Window, Qt::red );
         swTriggerStatus->setPalette( triggerLabelPalette );
@@ -1039,7 +1012,7 @@ void DsoWidget::showNew( std::shared_ptr< PPresult > analysedData ) {
     } else if ( scope->trigger.mode == Dso::TriggerMode::ROLL ) {
         swTriggerStatus->setVisible( false );
     } else {
-        swTriggerStatus->setText( tr( "TR" ) );
+        swTriggerStatus->setText( QStringLiteral( "TR" ) );
         triggerLabelPalette.setColor( QPalette::WindowText, Qt::black );
         triggerLabelPalette.setColor( QPalette::Window, analysedData->softwareTriggerTriggered ? Qt::green : Qt::red );
         swTriggerStatus->setPalette( triggerLabelPalette );
@@ -1077,28 +1050,28 @@ void DsoWidget::showNew( std::shared_ptr< PPresult > analysedData ) {
                     uVisible = true;
                     if ( uCursor > data->vmin - 0.2 * scope->gain( channel ) &&
                          uCursor <= data->vmax + 0.2 * scope->gain( channel ) )
-                        uStr += '\t' + scope->voltage[ channel ].name + ": " + valueToString( uCursor, voltageUnit, 3 );
+                        uStr += '\t' + scope->voltage[ channel ].name + ": " + valueToStringEnglish( uCursor, voltageUnit, 3 );
                 }
                 if ( scope->spectrum[ channel ].visible ) {
                     mVisible = true;
                     if ( mCursor > data->dBmin - 0.2 * scope->spectrum[ channel ].magnitude &&
                          mCursor <= data->dBmax + 0.2 * scope->spectrum[ channel ].magnitude )
-                        mStr += '\t' + scope->spectrum[ channel ].name + ": " + valueToString( mCursor, UNIT_DECIBEL, 3 ) +
+                        mStr += '\t' + scope->spectrum[ channel ].name + ": " + valueToStringEnglish( mCursor, UNIT_DECIBEL, 3 ) +
                                 scope->analysis.dBsuffix();
                 }
             }
             // Vpp Amplitude string representation (3 significant digits)
-            measurementVppLabel[ channel ]->setText( valueToString( data->vmax - data->vmin, voltageUnit, 3 ) + tr( "pp" ) );
+            measurementVppLabel[ channel ]->setText( valueToStringEnglish( data->vmax - data->vmin, voltageUnit, 3 ) + QStringLiteral( "pp" ) );
             // DC Amplitude string representation (3 significant digits)
-            measurementDCLabel[ channel ]->setText( valueToString( data->dc, voltageUnit, 3 ) + "=" );
+            measurementDCLabel[ channel ]->setText( valueToStringEnglish( data->dc, voltageUnit, 3 ) + "=" );
             // AC Amplitude string representation (3 significant digits)
-            measurementACLabel[ channel ]->setText( valueToString( data->ac, voltageUnit, 3 ) + "~" );
+            measurementACLabel[ channel ]->setText( valueToStringEnglish( data->ac, voltageUnit, 3 ) + "~" );
             // RMS Amplitude string representation (3 significant digits)
-            measurementRMSLabel[ channel ]->setText( valueToString( data->rms, voltageUnit, 3 ) + tr( "rms" ) );
+            measurementRMSLabel[ channel ]->setText( valueToStringEnglish( data->rms, voltageUnit, 3 ) + QStringLiteral( "rms" ) );
             // dB Amplitude string representation (3 significant digits)
-            measurementdBLabel[ channel ]->setText( valueToString( data->dB, UNIT_DECIBEL, 3 ) + scope->analysis.dBsuffix() );
+            measurementdBLabel[ channel ]->setText( valueToStringEnglish( data->dB, UNIT_DECIBEL, 3 ) + scope->analysis.dBsuffix() );
             // Frequency string representation (3 significant digits)
-            measurementFrequencyLabel[ channel ]->setText( valueToString( data->frequency, UNIT_HERTZ, 4 ) );
+            measurementFrequencyLabel[ channel ]->setText( valueToStringEnglish( data->frequency, UNIT_HERTZ, 4 ) );
             // Frequency note representation
             if ( scope->analysis.showNoteValue ) {
                 measurementLayout->setColumnStretch( 12, 3 );
@@ -1111,7 +1084,7 @@ void DsoWidget::showNew( std::shared_ptr< PPresult > analysedData ) {
             if ( scope->analysis.calculateDummyLoad && scope->analysis.dummyLoad > 0 ) {
                 measurementLayout->setColumnStretch( 9, 3 );
                 measurementRMSPowerLabel[ channel ]->setText(
-                    valueToString( ( data->rms * data->rms ) / scope->analysis.dummyLoad, UNIT_WATTS, 3 ) );
+                    valueToStringEnglish( ( data->rms * data->rms ) / scope->analysis.dummyLoad, UNIT_WATTS, 3 ) );
             } else { // do not show this label
                 measurementRMSPowerLabel[ channel ]->setText( "" );
                 measurementLayout->setColumnStretch( 9, 0 ); // Power
@@ -1146,14 +1119,14 @@ void DsoWidget::showNew( std::shared_ptr< PPresult > analysedData ) {
         // show time if inside voltage trace or outside of all traces
         if ( uVisible && ( !uStr.isEmpty() || ( uStr.isEmpty() && mStr.isEmpty() ) ) ) {
             measurement +=
-                valueToString( ( cursorMeasurementPosition.x() + DIVS_TIME / 2.0 ) * scope->horizontal.timebase, UNIT_SECONDS, 3 );
+                valueToStringEnglish( ( cursorMeasurementPosition.x() + DIVS_TIME / 2.0 ) * scope->horizontal.timebase, UNIT_SECONDS, 3 );
             measurement += '\t' + uStr;
         }
         // show frequency if inside spectrum trace or outside of all traces
         if ( mVisible && ( !mStr.isEmpty() || ( uStr.isEmpty() && mStr.isEmpty() ) ) ) {
             if ( !measurement.isEmpty() )
                 measurement += '\n';
-            measurement += valueToString( ( cursorMeasurementPosition.x() + DIVS_TIME / 2.0 ) * scope->horizontal.frequencybase,
+            measurement += valueToStringEnglish( ( cursorMeasurementPosition.x() + DIVS_TIME / 2.0 ) * scope->horizontal.frequencybase,
                                           UNIT_HERTZ, 3 );
             measurement += '\t' + mStr;
         }
@@ -1287,7 +1260,7 @@ void DsoWidget::updateTriggerPosition( int index, double value, bool pressed, QP
         int resolution = 3;
         if ( !mainView )
             resolution += int( log10( zoomFactor ) );
-        showCursorMessage( globalPos, valueToString( scope->trigger.position * scope->horizontal.timebase * DIVS_TIME, UNIT_SECONDS,
+        showCursorMessage( globalPos, valueToStringEnglish( scope->trigger.position * scope->horizontal.timebase * DIVS_TIME, UNIT_SECONDS,
                                                      resolution ) );
     } else
         showCursorMessage();
@@ -1319,7 +1292,7 @@ void DsoWidget::updateTriggerLevel( ChannelID channel, double value, bool presse
         qDebug() << "  DsoWidget::updateTriggerValue()" << channel << value << pressed << globalPos;
     emit triggerLevelChanged( channel, value );
     if ( pressed )
-        showCursorMessage( globalPos, valueToString( value, voltageUnits[ channel ], 3 ) );
+        showCursorMessage( globalPos, valueToStringEnglish( value, voltageUnits[ channel ], 3 ) );
     else
         showCursorMessage();
 }

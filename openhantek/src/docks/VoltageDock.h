@@ -68,6 +68,7 @@ class VoltageDock : public QDockWidget {
 
   protected:
     void closeEvent( QCloseEvent *event ) override;
+    void changeEvent( QEvent *event ) override;
 
     QGridLayout *dockLayout; ///< The main layout for the dock window
     QWidget *dockWidget;     ///< The main widget for the dock window

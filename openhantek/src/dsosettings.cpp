@@ -5,6 +5,8 @@
 #include <QFileInfo>
 #include <QSettings>
 
+#include <algorithm>
+
 #include "dsosettings.h"
 #include "hantekdso/mathmodes.h"
 
@@ -18,22 +20,22 @@ DsoSettings::DsoSettings( const ScopeDevice *scopeDevice, int verboseLevel, bool
     if ( verboseLevel > 1 )
         qDebug() << " DsoSettings::DsoSettings()" << deviceName << deviceID << resetSettings;
     // Add new channels to the list
-    int voltage_hue[] = { 34, 210, 0, 120 };   // amber, blue, red, green: readable on the light scope canvas
-    int spectrum_hue[] = { 24, 230, 330, 90 }; // orange, blue, purple, green
+    int voltage_hue[] = { 39, 210, 0, 120 };   // amber and blue, distinct on the light measurement surface
+    int spectrum_hue[] = { 30, 240, 330, 90 }; // orange, blue, purple, green
     unsigned index = 0;
     scope.hasACcoupling = deviceSpecification->hasACcoupling;
     while ( scope.spectrum.size() < deviceSpecification->channels ) {
         // Spectrum
         DsoSettingsScopeSpectrum newSpectrum;
-        newSpectrum.name = tr( "SP%1" ).arg( index + 1 );
+        newSpectrum.name = QStringLiteral( "SP%1" ).arg( index + 1 );
         scope.spectrum.push_back( newSpectrum );
 
         // Voltage
         DsoSettingsScopeVoltage newVoltage;
-        newVoltage.name = tr( "CH%1" ).arg( index + 1 );
+        newVoltage.name = QStringLiteral( "CH%1" ).arg( index + 1 );
         scope.voltage.push_back( newVoltage );
-        view.screen.voltage.push_back( QColor::fromHsv( voltage_hue[ index ], 0xf0, 0xd0 ) );
-        view.screen.spectrum.push_back( QColor::fromHsv( spectrum_hue[ index ], 0xff, 0xf0 ) );
+        view.screen.voltage.push_back( QColor::fromHsv( voltage_hue[ index ], 0xff, 0xff ) );
+        view.screen.spectrum.push_back( QColor::fromHsv( spectrum_hue[ index ], 0xff, 0xff ) );
         view.print.voltage.push_back( view.screen.voltage.back().darker() );
         view.print.spectrum.push_back( view.screen.spectrum.back().darker() );
         if ( ++index >= sizeof voltage_hue )
@@ -41,12 +43,12 @@ DsoSettings::DsoSettings( const ScopeDevice *scopeDevice, int verboseLevel, bool
     }
 
     DsoSettingsScopeSpectrum newSpectrum;
-    newSpectrum.name = tr( "SPM" );
+    newSpectrum.name = QStringLiteral( "SPM" );
     scope.spectrum.push_back( newSpectrum );
 
     DsoSettingsScopeVoltage newVoltage;
     newVoltage.couplingOrMathIndex = unsigned( Dso::MathMode::ADD_CH1_CH2 );
-    newVoltage.name = tr( "MATH" );
+    newVoltage.name = QStringLiteral( "MATH" );
     scope.voltage.push_back( newVoltage );
 
     view.screen.voltage.push_back( QColor::fromHsv( 300, 0xff, 0xff ) );  // purple (V=100%)
@@ -110,8 +112,15 @@ void DsoSettings::load() {
     if ( resetSettings || storeSettings->value( "configuration/version", 0 ).toUInt() < CONFIG_VERSION ) {
         // incompatible change or config reset by user
         storeSettings->clear(); // start with a clean config storage
-        QSettings().clear();    // and a clean global storage
+        // The language is a user-level UI preference, not a device calibration
+        // parameter. Do not discard it when an old scope configuration is reset.
+        QSettings globalSettings;
+        const QString savedLanguage = globalSettings.value( "view/language" ).toString();
+        globalSettings.clear();
+        if ( !savedLanguage.isEmpty() )
+            globalSettings.setValue( "view/language", savedLanguage );
         setDefaultConfig();
+        storeSettings->setValue( "scope/spectrumDefaultsInitialized", true );
         return;
     }
 
@@ -181,6 +190,15 @@ void DsoSettings::load() {
         }
         storeSettings->endGroup(); // cursor
         storeSettings->endGroup(); // spectrum%1
+    }
+    // Older settings did not initialize the two spectrum traces. Enable them
+    // once so the first launch matches the standard four-trace oscilloscope
+    // view, while preserving any spectrum visibility changes made afterwards.
+    if ( !storeSettings->value( "spectrumDefaultsInitialized", false ).toBool() ) {
+        const ChannelID visibleSpectra = std::min< ChannelID >( 2, ChannelID( scope.spectrum.size() ) );
+        for ( ChannelID channel = 0; channel < visibleSpectra; ++channel )
+            scope.spectrum[ channel ].used = true;
+        storeSettings->setValue( "spectrumDefaultsInitialized", true );
     }
     // Voltage
     bool defaultConfig = false;
@@ -301,40 +319,6 @@ void DsoSettings::load() {
         storeSettings->endGroup(); // screen / print
     }
     storeSettings->endGroup(); // color
-    // Upgrade stock OpenHantek and the previous laboratory default canvases to
-    // the approved gray measurement surface, but leave user-customized colors
-    // untouched.
-    const bool legacyDefaultCanvas = view.screen.background == QColor( 0x00, 0x00, 0x00 ) &&
-                                     view.screen.text == QColor( 0xff, 0xff, 0xff ) &&
-                                     view.screen.axes == QColor( 0x7f, 0x7f, 0x7f ) &&
-                                     view.screen.border == QColor( 0xff, 0xff, 0xff ) &&
-                                     view.screen.grid == QColor( 0xc0, 0xc0, 0xc0 ) &&
-                                     view.screen.markers == QColor( 0xc0, 0xc0, 0xc0 );
-    const bool previousLaboratoryDefault = view.screen.background == QColor( 0xff, 0xff, 0xff ) &&
-                                           view.screen.border == QColor( 0xb7, 0xc0, 0xcc ) &&
-                                           view.screen.grid == QColor( 0xd7, 0xde, 0xe7 ) &&
-                                           view.screen.markers == QColor( 0x8c, 0x98, 0xa8 ) &&
-                                           view.screen.text == QColor( 0x20, 0x29, 0x38 );
-    if ( legacyDefaultCanvas || previousLaboratoryDefault ) {
-        view.screen.axes = QColor( 0x64, 0x74, 0x8b );
-        view.screen.background = QColor( 0xd2, 0xd9, 0xe2 );
-        view.screen.border = QColor( 0xa7, 0xb4, 0xc3 );
-        view.screen.grid = QColor( 0xa7, 0xb4, 0xc3 );
-        view.screen.markers = QColor( 0x52, 0x64, 0x7a );
-        view.screen.text = QColor( 0x24, 0x32, 0x47 );
-        if ( view.screen.voltage.size() > 1 &&
-             view.screen.voltage[ 0 ] == QColor::fromHsv( 60, 0xff, 0xff ) &&
-             view.screen.voltage[ 1 ] == QColor::fromHsv( 210, 0xff, 0xff ) ) {
-            view.screen.voltage[ 0 ] = QColor::fromHsv( 34, 0xf0, 0xd0 );
-            view.screen.voltage[ 1 ] = QColor::fromHsv( 210, 0xf0, 0xd0 );
-        }
-        if ( view.screen.spectrum.size() > 1 &&
-             view.screen.spectrum[ 0 ] == QColor::fromHsv( 30, 0xff, 0xff ) &&
-             view.screen.spectrum[ 1 ] == QColor::fromHsv( 240, 0xff, 0xff ) ) {
-            view.screen.spectrum[ 0 ] = QColor::fromHsv( 24, 0xff, 0xf0 );
-            view.screen.spectrum[ 1 ] = QColor::fromHsv( 230, 0xff, 0xf0 );
-        }
-    }
     // Other view settings
     if ( storeSettings->contains( "histogram" ) )
         scope.histogram = storeSettings->value( "histogram" ).toBool();
@@ -537,4 +521,6 @@ void DsoSettings::setDefaultConfig() {
     scope.voltage[ 0 ].offset = MARGIN_TOP / 2; // mid of upper screen half
     scope.voltage[ 1 ].used = true;
     scope.voltage[ 1 ].offset = MARGIN_BOTTOM / 2; // mid of lower screen half
+    for ( ChannelID channel = 0; channel < std::min< ChannelID >( 2, ChannelID( scope.spectrum.size() ) ); ++channel )
+        scope.spectrum[ channel ].used = true;
 }

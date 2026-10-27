@@ -9,6 +9,7 @@
 #include <QStyleFactory>
 #include <QSurfaceFormat>
 #include <QTranslator>
+#include <QStringList>
 #include <qstyle.h>
 #ifdef Q_OS_LINUX
 #include <sched.h>
@@ -49,12 +50,6 @@
 #include "exporting/exporterregistry.h"
 #include "exporting/exportjson.h"
 
-// Research experiment storage and playback
-#include "experiment/experimentcatalog.h"
-#include "experiment/experimentmanager.h"
-#include "experiment/rawplaybackengine.h"
-#include "experiment/rawrecordingengine.h"
-
 // GUI
 #include "mainwindow.h"
 #include "selectdevice/selectsupporteddevice.h"
@@ -65,6 +60,35 @@
 #include "OH_VERSION.h"
 
 using namespace Hantek;
+
+namespace {
+QTranslator qtUiTranslator;
+QTranslator openHantekUiTranslator;
+}
+
+void changeApplicationLanguage( const QString &language ) {
+    auto *application = qobject_cast< QApplication * >( QCoreApplication::instance() );
+    if ( application == nullptr )
+        return;
+    const QString code = language.left( 2 ).toLower();
+    const QStringList supported = { "en", "de", "es", "fr", "it", "pl", "pt", "ru", "sv", "zh" };
+    if ( !supported.contains( code ) )
+        return;
+
+    // Every locale, including English, has a catalogue for the laboratory UI.
+    // Never fall back to another locale's translator when switching at runtime.
+    application->removeTranslator( &openHantekUiTranslator );
+    application->removeTranslator( &qtUiTranslator );
+    const QLocale locale( code );
+    if ( code != QStringLiteral( "en" ) &&
+         ( qtUiTranslator.load( "qtbase_" + locale.name(), QLibraryInfo::path( QLibraryInfo::TranslationsPath ) ) ||
+           qtUiTranslator.load( "qt_" + locale.name(), QLibraryInfo::path( QLibraryInfo::TranslationsPath ) ) ) )
+        application->installTranslator( &qtUiTranslator );
+    // Embedded translations are generated from TS at build time. No .qm copying
+    // or restart is necessary: installing a translator emits LanguageChange.
+    if ( openHantekUiTranslator.load( "openhantek_" + code, QLatin1String( ":/translations" ) ) )
+        application->installTranslator( &openHantekUiTranslator );
+}
 
 /// \brief Initialize resources and translations and show the main window.
 int main( int argc, char *argv[] ) {
@@ -325,18 +349,14 @@ int main( int argc, char *argv[] ) {
     if ( verboseLevel )
         qDebug() << startupTime.elapsed() << "ms:"
                  << "load translations for locale" << QLocale().name();
-    QTranslator qtTranslator;
-    QTranslator openHantekTranslator;
-    if ( !doNotTranslate && useLocale &&
-         QLocale().name() != "en_US" ) { // somehow Qt on MacOS uses the german translation for en_US?!
-        if ( qtTranslator.load( "qt_" + QLocale().name(), QLibraryInfo::path( QLibraryInfo::TranslationsPath ) ) ) {
-            openHantekApplication.installTranslator( &qtTranslator );
-        }
-        if ( openHantekTranslator.load( QLocale(), QLatin1String( "openhantek" ), QLatin1String( "_" ),
-                                        QLatin1String( ":/translations" ) ) ) {
-            openHantekApplication.installTranslator( &openHantekTranslator );
-        }
-    }
+    QString interfaceLanguage = QSettings().value( "view/language", QStringLiteral( "auto" ) ).toString();
+    // Explicit selection wins over the obsolete doNotTranslate checkbox.
+    // The -i command-line option still forces the international interface.
+    if ( !useLocale || ( doNotTranslate && interfaceLanguage == QStringLiteral( "auto" ) ) )
+        interfaceLanguage = QStringLiteral( "en" );
+    else if ( interfaceLanguage == QStringLiteral( "auto" ) )
+        interfaceLanguage = QLocale().name().left( 2 );
+    changeApplicationLanguage( interfaceLanguage );
 
     //////// Find matching usb devices - show splash screen ////////
     libusb_context *context = nullptr;
@@ -429,10 +449,6 @@ int main( int argc, char *argv[] ) {
     ExporterCSV exporterCSV;
     ExporterJSON exporterJSON;
     ExporterProcessor samplesToExportRaw( &exportRegistry );
-    ExperimentManager experimentManager;
-    ExperimentCatalog experimentCatalog( experimentManager.projectsRoot() );
-    RawRecordingEngine rawRecordingEngine;
-    RawPlaybackEngine rawPlaybackEngine;
     exportRegistry.registerExporter( &exporterCSV );
     exportRegistry.registerExporter( &exporterJSON );
 
@@ -450,21 +466,14 @@ int main( int argc, char *argv[] ) {
     GraphGenerator graphGenerator( &settings.scope, &settings.view );
 
     postProcessing.registerProcessor( &samplesToExportRaw );
-    postProcessing.registerProcessor( &rawRecordingEngine );
     // postProcessing.registerProcessor( &mathchannelGenerator );
     postProcessing.registerProcessor( &spectrumGenerator );
     postProcessing.registerProcessor( &graphGenerator );
-    postProcessing.registerPlaybackProcessor( &spectrumGenerator );
-    postProcessing.registerPlaybackProcessor( &graphGenerator );
 
     postProcessing.moveToThread( &postProcessingThread );
     QObject::connect( &dsoControl, &HantekDsoControl::samplesAvailable, &postProcessing, &PostProcessing::input );
     QObject::connect( &postProcessing, &PostProcessing::processingFinished, &exportRegistry, &ExporterRegistry::input,
                       Qt::DirectConnection );
-    QObject::connect( &rawPlaybackEngine, &RawPlaybackEngine::frameReady, &postProcessing, &PostProcessing::inputPlayback,
-                      Qt::QueuedConnection );
-    QObject::connect( &postProcessing, &PostProcessing::playbackFrameProcessed, &rawPlaybackEngine,
-                      &RawPlaybackEngine::frameProcessed, Qt::QueuedConnection );
 
     if ( verboseLevel )
         qDebug() << startupTime.elapsed() << "ms:"
@@ -531,15 +540,12 @@ int main( int argc, char *argv[] ) {
     if ( verboseLevel )
         qDebug() << startupTime.elapsed() << "ms:"
                  << "create main window";
-    MainWindow openHantekMainWindow( &dsoControl, &settings, &exportRegistry, &experimentManager, &experimentCatalog,
-                                     &rawRecordingEngine, &rawPlaybackEngine );
+    MainWindow openHantekMainWindow( &dsoControl, &settings, &exportRegistry );
     if ( reconnectSupervisor ) {
         QObject::connect( reconnectSupervisor.get(), &DeviceReconnectionSupervisor::connectionStateChanged, &openHantekMainWindow,
                           &MainWindow::deviceConnectionStateChanged );
     }
     QObject::connect( &postProcessing, &PostProcessing::processingFinished, &openHantekMainWindow, &MainWindow::showNewData );
-    QObject::connect( &postProcessing, &PostProcessing::playbackProcessingFinished, &openHantekMainWindow,
-                      &MainWindow::showNewData );
     QObject::connect( &exportRegistry, &ExporterRegistry::exporterProgressChanged, &openHantekMainWindow,
                       &MainWindow::exporterProgressChanged );
     QObject::connect( &exportRegistry, &ExporterRegistry::exporterStatusChanged, &openHantekMainWindow,

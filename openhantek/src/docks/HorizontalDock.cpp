@@ -2,6 +2,7 @@
 
 #include <QCheckBox>
 #include <QCloseEvent>
+#include <QEvent>
 #include <QComboBox>
 #include <QCoreApplication>
 #include <QDebug>
@@ -120,6 +121,27 @@ void HorizontalDock::triggerModeChanged( Dso::TriggerMode mode ) {
 
 /// \brief Don't close the dock, just hide it.
 /// \param event The close event that should be handled.
+void HorizontalDock::changeEvent( QEvent *event ) {
+    QDockWidget::changeEvent( event );
+    if ( event->type() != QEvent::LanguageChange || !samplerateLabel ) return;
+    setWindowTitle( tr( "Horizontal" ) );
+    samplerateLabel->setText( tr( "Samplerate" ) );
+    timebaseLabel->setText( tr( "Timebase" ) );
+    formatLabel->setText( tr( "Format" ) );
+    calfreqLabel->setText( tr( "Calibration out" ) );
+    samplerateSiSpinBox->setUnitPostfix( tr( "/s" ) );
+    if ( scope->toolTipVisible ) {
+        samplerateSiSpinBox->setToolTip( tr( "Effective samplerate, automatically selected from 'Timebase' setting" ) );
+        timebaseSiSpinBox->setToolTip( tr( "Time per horizontal screen division" ) );
+        formatComboBox->setToolTip( tr( "Select signal over time or XY display" ) );
+        calfreqComboBox->setToolTip( tr( "Select the frequency of the calibration output, scroll for fast change" ) );
+    }
+    const QSignalBlocker blocker( formatComboBox );
+    int index = 0;
+    for ( Dso::GraphFormat format : Dso::GraphFormatEnum )
+        formatComboBox->setItemText( index++, Dso::graphFormatString( format ) );
+}
+
 void HorizontalDock::closeEvent( QCloseEvent *event ) {
     hide();
     event->accept();

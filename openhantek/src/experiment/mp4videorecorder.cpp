@@ -10,13 +10,14 @@
 #include <system_error>
 #include <utility>
 
-#if defined(Q_OS_WIN) && defined(_MSC_VER)
+#if defined(Q_OS_WIN)
+#include <windows.h>
+#include <objbase.h>
 #include <codecapi.h>
 #include <mfapi.h>
 #include <mferror.h>
 #include <mfidl.h>
 #include <mfreadwrite.h>
-#include <objbase.h>
 #include <wrl/client.h>
 #include <cstring>
 
@@ -38,7 +39,7 @@ Mp4VideoRecorder::~Mp4VideoRecorder() {
 }
 
 bool Mp4VideoRecorder::isSupported() {
-#if defined(Q_OS_WIN) && defined(_MSC_VER)
+#if defined(Q_OS_WIN)
     return true;
 #else
     return false;
@@ -59,7 +60,7 @@ bool Mp4VideoRecorder::start( const QString &path, const QSize &frameSize, int f
             *errorMessage = videoRecorderText( "Video recording is already active." );
         return false;
     }
-#if !defined(Q_OS_WIN) || !defined(_MSC_VER)
+#if !defined(Q_OS_WIN)
     Q_UNUSED( path )
     Q_UNUSED( frameSize )
     Q_UNUSED( framesPerSecond )
@@ -168,7 +169,7 @@ bool Mp4VideoRecorder::stop( QString *errorMessage ) {
 }
 
 void Mp4VideoRecorder::encodeFrames( const QString &path, const QSize &frameSize, int framesPerSecond ) {
-#if !defined(Q_OS_WIN) || !defined(_MSC_VER)
+#if !defined(Q_OS_WIN)
     Q_UNUSED( path )
     Q_UNUSED( frameSize )
     Q_UNUSED( framesPerSecond )

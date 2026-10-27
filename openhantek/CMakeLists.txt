@@ -10,7 +10,7 @@ endif()
 
 
 find_package(Qt6PrintSupport REQUIRED)
-find_package(Qt6 REQUIRED COMPONENTS OpenGLWidgets Sql Multimedia MultimediaWidgets)
+find_package(Qt6 REQUIRED COMPONENTS OpenGLWidgets)
 find_package(OpenGL)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC ON)
@@ -65,19 +65,23 @@ endif()
 # make executable
 add_executable(${PROJECT_NAME} ${EXECTYPE} ${SRC} ${HEADERS} ${UI}
 ${QRC} ${RC} ${TRANSLATION_BIN_FILES} ${TRANSLATION_QRC} ${ICONS})
-target_link_libraries(${PROJECT_NAME} Qt6::Widgets Qt6::PrintSupport Qt6::OpenGL Qt6::OpenGLWidgets Qt6::Sql
-    Qt6::Multimedia Qt6::MultimediaWidgets ${OPENGL_LIBRARIES} )
+target_link_libraries(${PROJECT_NAME} Qt6::Widgets Qt6::PrintSupport Qt6::OpenGL Qt6::OpenGLWidgets
+    ${OPENGL_LIBRARIES} )
 if( APPLE AND BUILD_MACOSX_BUNDLE )
     find_package(Qt6 REQUIRED COMPONENTS DBus)
     target_link_libraries(${PROJECT_NAME} Qt6::DBus )
 endif()
 target_compile_features(${PROJECT_NAME} PRIVATE cxx_range_for)
 
+if(WIN32)
+    # Media Foundation is available with both MSVC and MinGW-w64 Windows SDKs.
+    target_link_libraries(${PROJECT_NAME} mfplat mfreadwrite mfuuid ole32)
+endif()
+
 if(MSVC)
     include(../cmake/fftw_on_windows.cmake)
     include(../cmake/libusb_on_windows.cmake)
     include(../cmake/copy_qt6_dlls_to_bin_dir.cmake)
-    target_link_libraries(${PROJECT_NAME} mfplat mfreadwrite mfuuid ole32)
     target_compile_options(${PROJECT_NAME} PRIVATE "/W4" "/wd4251" "/wd4127" "/wd4275" "/wd4200" "/nologo" "/J" "/Zi")
     target_compile_options(${PROJECT_NAME} PRIVATE "$<$<CONFIG:DEBUG>:/MDd>")
 else()

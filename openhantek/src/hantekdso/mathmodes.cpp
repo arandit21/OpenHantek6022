@@ -31,70 +31,78 @@ unsigned mathChannelsUsed( MathMode mode ) {
 /// \brief Return string representation of the given math mode.
 /// \param mode The ::MathMode that should be returned as string.
 /// \return The string that should be used in labels etc.
-QString mathModeString( MathMode mode ) {
+static QString mathModeStringImpl( MathMode mode, bool englishOnly ) {
     switch ( mode ) {
     case MathMode::ADD_CH1_CH2:
-        return QCoreApplication::tr( "CH1 + CH2" );
+        return ( englishOnly ? QStringLiteral( "CH1 + CH2" ) : QCoreApplication::tr( "CH1 + CH2" ) );
     case MathMode::SUB_CH2_FROM_CH1:
-        return QCoreApplication::tr( "CH1 - CH2" );
+        return ( englishOnly ? QStringLiteral( "CH1 - CH2" ) : QCoreApplication::tr( "CH1 - CH2" ) );
     case MathMode::SUB_CH1_FROM_CH2:
-        return QCoreApplication::tr( "CH2 - CH1" );
+        return ( englishOnly ? QStringLiteral( "CH2 - CH1" ) : QCoreApplication::tr( "CH2 - CH1" ) );
     case MathMode::MUL_CH1_CH2:
-        return QCoreApplication::tr( "CH1 * CH2" );
+        return ( englishOnly ? QStringLiteral( "CH1 * CH2" ) : QCoreApplication::tr( "CH1 * CH2" ) );
     case MathMode::AND_CH1_CH2:
-        return QCoreApplication::tr( "CH1 & CH2" );
+        return ( englishOnly ? QStringLiteral( "CH1 & CH2" ) : QCoreApplication::tr( "CH1 & CH2" ) );
     case MathMode::AND_NOT_CH1_NOT_CH2:
-        return QCoreApplication::tr( "/CH1 & /CH2" );
+        return ( englishOnly ? QStringLiteral( "/CH1 & /CH2" ) : QCoreApplication::tr( "/CH1 & /CH2" ) );
     case MathMode::AND_NOT_CH1_CH2:
-        return QCoreApplication::tr( "/CH1 & CH2" );
+        return ( englishOnly ? QStringLiteral( "/CH1 & CH2" ) : QCoreApplication::tr( "/CH1 & CH2" ) );
     case MathMode::AND_CH1_NOT_CH2:
-        return QCoreApplication::tr( "CH1 & /CH2" );
+        return ( englishOnly ? QStringLiteral( "CH1 & /CH2" ) : QCoreApplication::tr( "CH1 & /CH2" ) );
     case MathMode::XOR_CH1_CH2:
-        return QCoreApplication::tr( "CH1 ^ CH2" );
+        return ( englishOnly ? QStringLiteral( "CH1 ^ CH2" ) : QCoreApplication::tr( "CH1 ^ CH2" ) );
     case MathMode::EQU_CH1_CH2:
-        return QCoreApplication::tr( "CH1 ≡ CH2" );
+        return ( englishOnly ? QStringLiteral( "CH1 ≡ CH2" ) : QCoreApplication::tr( "CH1 ≡ CH2" ) );
     case MathMode::GREAT_CH1_CH2:
-        return QCoreApplication::tr( "CH1 > CH2" );
+        return ( englishOnly ? QStringLiteral( "CH1 > CH2" ) : QCoreApplication::tr( "CH1 > CH2" ) );
     case MathMode::GREAT_CH2_CH1:
-        return QCoreApplication::tr( "CH1 < CH2" );
+        return ( englishOnly ? QStringLiteral( "CH1 < CH2" ) : QCoreApplication::tr( "CH1 < CH2" ) );
     case MathMode::LP10_CH1:
-        return QCoreApplication::tr( "CH1 LP10" );
+        return ( englishOnly ? QStringLiteral( "CH1 LP10" ) : QCoreApplication::tr( "CH1 LP10" ) );
     case MathMode::LP10_CH2:
-        return QCoreApplication::tr( "CH2 LP10" );
+        return ( englishOnly ? QStringLiteral( "CH2 LP10" ) : QCoreApplication::tr( "CH2 LP10" ) );
     case MathMode::LP100_CH1:
-        return QCoreApplication::tr( "CH1 LP100" );
+        return ( englishOnly ? QStringLiteral( "CH1 LP100" ) : QCoreApplication::tr( "CH1 LP100" ) );
     case MathMode::LP100_CH2:
-        return QCoreApplication::tr( "CH2 LP100" );
+        return ( englishOnly ? QStringLiteral( "CH2 LP100" ) : QCoreApplication::tr( "CH2 LP100" ) );
     case MathMode::SQ_CH1:
-        return QCoreApplication::tr( "CH1²" );
+        return ( englishOnly ? QStringLiteral( "CH1²" ) : QCoreApplication::tr( "CH1²" ) );
     case MathMode::SQ_CH2:
-        return QCoreApplication::tr( "CH2²" );
+        return ( englishOnly ? QStringLiteral( "CH2²" ) : QCoreApplication::tr( "CH2²" ) );
     case MathMode::AC_CH1:
-        return QCoreApplication::tr( "CH1 AC" );
+        return ( englishOnly ? QStringLiteral( "CH1 AC" ) : QCoreApplication::tr( "CH1 AC" ) );
     case MathMode::AC_CH2:
-        return QCoreApplication::tr( "CH2 AC" );
+        return ( englishOnly ? QStringLiteral( "CH2 AC" ) : QCoreApplication::tr( "CH2 AC" ) );
     case MathMode::DC_CH1:
-        return QCoreApplication::tr( "CH1 DC" );
+        return ( englishOnly ? QStringLiteral( "CH1 DC" ) : QCoreApplication::tr( "CH1 DC" ) );
     case MathMode::DC_CH2:
-        return QCoreApplication::tr( "CH2 DC" );
+        return ( englishOnly ? QStringLiteral( "CH2 DC" ) : QCoreApplication::tr( "CH2 DC" ) );
     case MathMode::ABS_CH1:
-        return QCoreApplication::tr( "CH1 Abs" );
+        return ( englishOnly ? QStringLiteral( "CH1 Abs" ) : QCoreApplication::tr( "CH1 Abs" ) );
     case MathMode::ABS_CH2:
-        return QCoreApplication::tr( "CH2 Abs" );
+        return ( englishOnly ? QStringLiteral( "CH2 Abs" ) : QCoreApplication::tr( "CH2 Abs" ) );
     case MathMode::SIGN_CH1:
-        return QCoreApplication::tr( "CH1 Sign" );
+        return ( englishOnly ? QStringLiteral( "CH1 Sign" ) : QCoreApplication::tr( "CH1 Sign" ) );
     case MathMode::SIGN_CH2:
-        return QCoreApplication::tr( "CH2 Sign" );
+        return ( englishOnly ? QStringLiteral( "CH2 Sign" ) : QCoreApplication::tr( "CH2 Sign" ) );
     case MathMode::SIGN_AC_CH1:
-        return QCoreApplication::tr( "CH1 AC Sign" );
+        return ( englishOnly ? QStringLiteral( "CH1 AC Sign" ) : QCoreApplication::tr( "CH1 AC Sign" ) );
     case MathMode::SIGN_AC_CH2:
-        return QCoreApplication::tr( "CH2 AC Sign" );
+        return ( englishOnly ? QStringLiteral( "CH2 AC Sign" ) : QCoreApplication::tr( "CH2 AC Sign" ) );
     case MathMode::TRIG_CH1:
-        return QCoreApplication::tr( "CH1 Trigger" );
+        return ( englishOnly ? QStringLiteral( "CH1 Trigger" ) : QCoreApplication::tr( "CH1 Trigger" ) );
     case MathMode::TRIG_CH2:
-        return QCoreApplication::tr( "CH2 Trigger" );
+        return ( englishOnly ? QStringLiteral( "CH2 Trigger" ) : QCoreApplication::tr( "CH2 Trigger" ) );
     }
     return QString();
+}
+
+QString mathModeString( MathMode mode ) {
+    return mathModeStringImpl( mode, false );
+}
+
+QString mathModeStringEnglish( MathMode mode ) {
+    return mathModeStringImpl( mode, true );
 }
 
 } // namespace Dso

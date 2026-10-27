@@ -3,11 +3,9 @@
 #pragma once
 #include "post/ppresult.h"
 #include <QElapsedTimer>
-#include <QIcon>
 #include <QLineEdit>
 #include <QList>
 #include <QMainWindow>
-#include <QSize>
 #include <memory>
 
 #include "scopesettings.h"
@@ -17,22 +15,25 @@ class SpectrumGenerator;
 class HantekDsoControl;
 class DsoSettings;
 class ExporterRegistry;
-class ExperimentManager;
-class ExperimentCatalog;
-class RawRecordingEngine;
-class RawPlaybackEngine;
-class ExperimentLibraryWidget;
-class Mp4VideoRecorder;
-class QDockWidget;
-class QResizeEvent;
-class QTimer;
-class QToolButton;
 class DsoWidget;
 class HorizontalDock;
 class TriggerDock;
 class SpectrumDock;
 class VoltageDock;
 class QAction;
+class QDockWidget;
+class QToolButton;
+class QTimer;
+class MediaLibraryWidget;
+class Mp4VideoRecorder;
+class AnalysisWorkspace;
+class QTabWidget;
+class QEvent;
+class QMenu;
+class QTabBar;
+
+/// Replace the active application and Qt UI translations at runtime.
+void changeApplicationLanguage( const QString &language );
 
 namespace Ui {
 class MainWindow;
@@ -46,8 +47,7 @@ class MainWindow : public QMainWindow {
 
   public:
     explicit MainWindow( HantekDsoControl *dsoControl, DsoSettings *dsoSettings, ExporterRegistry *exporterRegistry,
-                         ExperimentManager *experimentManager, ExperimentCatalog *experimentCatalog,
-                         RawRecordingEngine *rawRecorder, RawPlaybackEngine *rawPlayback, QWidget *parent = nullptr );
+                         QWidget *parent = nullptr );
     ~MainWindow() override;
     QElapsedTimer elapsedTime;
 
@@ -59,7 +59,7 @@ class MainWindow : public QMainWindow {
 
   protected:
     void closeEvent( QCloseEvent *event ) override;
-    void resizeEvent( QResizeEvent *event ) override;
+    void changeEvent( QEvent *event ) override;
 
   private:
     Ui::MainWindow *ui;
@@ -70,44 +70,41 @@ class MainWindow : public QMainWindow {
 
     // Central widgets
     DsoWidget *dsoWidget;
+    QTabWidget *workspaceTabs = nullptr;
+    AnalysisWorkspace *analysisWorkspace = nullptr;
+    std::shared_ptr< PPresult > latestAnalysisData;
+    MediaLibraryWidget *mediaLibrary = nullptr;
+    QDockWidget *mediaLibraryDock = nullptr;
+    QList< QDockWidget * > parameterDocks;
+    QToolButton *libraryPanelHandle = nullptr;
+    QToolButton *parameterPanelHandle = nullptr;
+    QAction *libraryAction = nullptr;
+    QAction *parametersAction = nullptr;
+    QAction *videoAction = nullptr;
+    QAction *snapshotAction = nullptr;
+    QMenu *languageMenu = nullptr;
+    QTabBar *workspaceSwitcher = nullptr;
+    QString titleModelName;
+    QString titleFirmware;
+    bool titleRealDevice = false;
+    void updateWindowTitle();
+    QTimer *videoFrameTimer = nullptr;
+    std::unique_ptr< Mp4VideoRecorder > videoRecorder;
 
     // Settings used for the whole program
     DsoSettings *dsoSettings;
     ExporterRegistry *exporterRegistry;
-    HantekDsoControl *dsoControl;
-    ExperimentManager *experimentManager;
-    ExperimentCatalog *experimentCatalog;
-    RawRecordingEngine *rawRecorder;
-    RawPlaybackEngine *rawPlayback;
-    std::unique_ptr< Mp4VideoRecorder > videoRecorder;
-    ExperimentLibraryWidget *libraryWidget = nullptr;
-    QDockWidget *libraryDock = nullptr;
-    QList< QDockWidget * > parameterDocks;
-    QToolButton *libraryRevealButton = nullptr;
-    QToolButton *parameterRevealButton = nullptr;
-    QTimer *videoFrameTimer = nullptr;
-    QAction *recordDataAction = nullptr;
-    QAction *recordVideoAction = nullptr;
-    QIcon dataRecordIcon;
-    QIcon videoRecordIcon;
-    bool resumeSamplingAfterPlayback = false;
-    int videoFps = 30;
-    QSize videoSize;
-    QElapsedTimer videoElapsed;
-    bool closingAfterRecording = false;
 
     // Taking screenshots
     enum screenshotType_t { SCREENSHOT, HARDCOPY, PRINTER };
     screenshotType_t screenshotType;
     void screenShot( screenshotType_t screenshotType = SCREENSHOT, bool autoSave = false );
-    void toggleDataRecording();
-    void toggleVideoRecording();
-    void appendVideoFrame();
-    void openRecording( const QString &path );
-    void updatePanelHandles();
 
     bool openDocument( QString docName );
     void setDeviceCommandUiEnabled( bool enabled );
+    void updatePanelHandles();
+    void toggleVideoRecording();
+    void appendVideoFrame();
 
     QList< QWidget * > deviceCommandWidgets;
     QList< QAction * > deviceCommandActions;
